@@ -76,9 +76,6 @@ static void *asr_create(obs_data_t *settings, [[maybe_unused]] obs_source_t *sou
 {
 	auto *ctx = new asr_source;
 
-	if (const char *audio_name = obs_data_get_string(settings, "audio_source"))
-		ctx->selected_audio_source = audio_name;
-
 	// Create internal text_ft2_source with passed-in properties
 	obs_data_t *text_settings = obs_data_create();
 	obs_data_set_string(text_settings, "text", "ASR Subtitles");
@@ -102,17 +99,12 @@ static void *asr_create(obs_data_t *settings, [[maybe_unused]] obs_source_t *sou
 		obs_log(LOG_ERROR, "[ASR] Failed to get OBS audio sample rate; using default 48000 → 16000");
 	}
 
-	obs_log(LOG_INFO, "[ASR] Source created with audio: %s", ctx->selected_audio_source.c_str());
 	obs_log(LOG_INFO, "[ASR] Internal text_ft2_source created with name: %s", name.c_str());
 
 	int err;
 	ctx->resampler = src_new(SRC_SINC_FASTEST, 1, &err);
 	if (!ctx->resampler) {
 		obs_log(LOG_ERROR, "[ASR] Failed to create resampler: %s", src_strerror(err));
-	}
-
-	if (obs_source_t *audio_src = obs_get_source_by_name(ctx->selected_audio_source.c_str())) {
-		obs_source_add_audio_capture_callback(audio_src, audio_callback, ctx);
 	}
 
 	return ctx;
@@ -212,6 +204,13 @@ static void asr_update(void *data, obs_data_t *settings)
 		obs_source_update(ctx->internal_text_source, settings);
 
 	obs_log(LOG_INFO, "[ASR] Source updated. Audio: %s", audio_name);
+
+	if (obs_source_t *audio_src = obs_get_source_by_name(ctx->selected_audio_source.c_str())) {
+		obs_source_add_audio_capture_callback(audio_src, audio_callback, ctx);
+		obs_log(LOG_INFO, "[ASR] Audio callback set up");
+	} else {
+		obs_log(LOG_ERROR, "[ASR] Failed to set up audio callback!");
+	}
 }
 
 static void asr_render(void *data,[[maybe_unused]] gs_effect_t *effect)
