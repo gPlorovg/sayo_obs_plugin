@@ -42,6 +42,10 @@ set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_nam
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SAMPLERATE REQUIRED samplerate)
+
 include_directories(${SAMPLERATE_INCLUDE_DIRS})
-link_libraries(${SAMPLERATE_LIBRARIES})
+link_directories(${SAMPLERATE_LIBRARY_DIRS})
+
+target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE ${SAMPLERATE_LIBRARIES})
+
 
