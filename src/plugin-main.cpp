@@ -2,22 +2,75 @@
 #include <plugin-support.h>
 #include <string>
 #include <atomic>
-
+#include <vector>
+#include <samplerate.h>
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 
 static std::atomic<int> asr_instance_counter{0};
+static std::atomic<int> audio_callback_count{0};
 
 struct asr_source {
 	std::string selected_audio_source;
 	obs_source_t *internal_text_source = nullptr;
+	SRC_STATE *resampler = nullptr;
+
+	int target_sample_rate = 16000;
+	uint32_t input_sample_rate = 48000;  // default value
+
+	float resample_ratio = static_cast<float>(target_sample_rate) / static_cast<float>(input_sample_rate);
+
+	std::vector<float> resample_input_buffer;
+	std::vector<float> resample_output_buffer;
 };
 
 static const char *asr_get_name([[maybe_unused]] void *unused)
 {
 	return "ASR Text Source";
 }
+
+size_t resample_audio(asr_source *ctx, const float *in, size_t in_frames)
+{
+	size_t max_out_frames = static_cast<size_t>(static_cast<float>(in_frames) * ctx->resample_ratio) + 1;
+	ctx->resample_output_buffer.resize(max_out_frames);
+
+	SRC_DATA src_data;
+	src_data.data_in = in;
+	src_data.input_frames = static_cast<long>(in_frames);
+	src_data.data_out = ctx->resample_output_buffer.data();
+	src_data.output_frames = static_cast<long>(max_out_frames);
+	src_data.src_ratio = ctx->resample_ratio;
+	src_data.end_of_input = 0;
+
+
+	if (int err = src_process(ctx->resampler, &src_data) != 0) {
+		obs_log(LOG_ERROR, "[ASR] Resample error: %s", src_strerror(err));
+		return 0;
+	}
+
+	return src_data.output_frames_gen;
+}
+
+void audio_callback(void *param, obs_source_t *source, const struct audio_data *audio_data, bool muted)
+{
+	auto *ctx = static_cast<asr_source *>(param);
+
+	if (muted)
+		return;
+
+	auto *samples = reinterpret_cast<const float *>(audio_data->data[0]);
+	const size_t frames = audio_data->frames;
+
+	const size_t out_frames = resample_audio(ctx, samples, frames);
+
+	if (audio_callback_count % 100 == 0) {
+		obs_log(LOG_INFO,
+			"[ASR] Every 100 calls '%s': input = %zu, output = %zu",
+			frames, out_frames, obs_source_get_name(source));
+	}
+}
+
 
 static void *asr_create(obs_data_t *settings, [[maybe_unused]] obs_source_t *source)
 {
@@ -39,8 +92,28 @@ static void *asr_create(obs_data_t *settings, [[maybe_unused]] obs_source_t *sou
 	ctx->internal_text_source = obs_source_create("text_ft2_source", name.c_str(), text_settings, nullptr);
 	obs_data_release(text_settings);
 
+	if (const audio_output_info *info = audio_output_get_info(obs_get_audio())) {
+		ctx->input_sample_rate = info->samples_per_sec;
+		ctx->resample_ratio = static_cast<float>(ctx->target_sample_rate) / static_cast<float>(ctx->input_sample_rate);
+
+		obs_log(LOG_INFO, "[ASR] Input sample rate from OBS: %d", ctx->input_sample_rate);
+		obs_log(LOG_INFO, "[ASR] Resample ratio: %.6f", ctx->resample_ratio);
+	} else {
+		obs_log(LOG_ERROR, "[ASR] Failed to get OBS audio sample rate; using default 48000 → 16000");
+	}
+
 	obs_log(LOG_INFO, "[ASR] Source created with audio: %s", ctx->selected_audio_source.c_str());
 	obs_log(LOG_INFO, "[ASR] Internal text_ft2_source created with name: %s", name.c_str());
+
+	int err;
+	ctx->resampler = src_new(SRC_SINC_FASTEST, 1, &err);
+	if (!ctx->resampler) {
+		obs_log(LOG_ERROR, "[ASR] Failed to create resampler: %s", src_strerror(err));
+	}
+
+	if (obs_source_t *audio_src = obs_get_source_by_name(ctx->selected_audio_source.c_str())) {
+		obs_source_add_audio_capture_callback(audio_src, audio_callback, ctx);
+	}
 
 	return ctx;
 }
@@ -50,6 +123,8 @@ static void asr_destroy(void *data)
 	auto *ctx = static_cast<asr_source *>(data);
 	if (ctx->internal_text_source)
 		obs_source_release(ctx->internal_text_source);
+	if (ctx->resampler)
+		src_delete(ctx->resampler);
 	delete ctx;
 }
 
@@ -159,7 +234,6 @@ static uint32_t asr_get_height(void *data) {
 		? obs_source_get_height(ctx->internal_text_source)
 		: 0;
 }
-
 
 static struct obs_source_info asr_source_info = {
 	/* Required */

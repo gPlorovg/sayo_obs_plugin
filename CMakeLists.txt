@@ -39,3 +39,9 @@ if(ENABLE_QT)
 endif()
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
+
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(SAMPLERATE REQUIRED samplerate)
+include_directories(${SAMPLERATE_INCLUDE_DIRS})
+link_libraries(${SAMPLERATE_LIBRARIES})
+
