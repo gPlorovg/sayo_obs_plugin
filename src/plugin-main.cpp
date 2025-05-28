@@ -9,7 +9,7 @@ OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 
 static std::atomic<int> asr_instance_counter{0};
-static std::atomic<int> audio_callback_count{0};
+static int audio_callback_count{0};
 
 struct asr_source {
 	std::string selected_audio_source;
@@ -23,6 +23,7 @@ struct asr_source {
 
 	std::vector<float> resample_input_buffer;
 	std::vector<float> resample_output_buffer;
+	int resampler_warmed_up = 5;
 };
 
 static const char *asr_get_name([[maybe_unused]] void *unused)
@@ -63,18 +64,34 @@ void audio_callback(void *param, obs_source_t *source, const struct audio_data *
 	const size_t frames = audio_data->frames;
 
 	const size_t out_frames = resample_audio(ctx, samples, frames);
-
+	if (ctx->resampler_warmed_up != 0) {
+		ctx->resampler_warmed_up--;
+		return;
+	}
 	if (audio_callback_count % 2000 == 0) {
 		obs_log(LOG_INFO,
-			"Every 100 calls '%s': input = %zu, output = %zu",
-			frames, out_frames, obs_source_get_name(source));
+			"Every 2000 calls '%s': input = %zu, output = %zu",
+			obs_source_get_name(source), frames, out_frames);
 	}
 }
-
 
 static void *asr_create([[maybe_unused]] obs_data_t *settings, [[maybe_unused]] obs_source_t *source)
 {
 	auto *ctx = new asr_source;
+
+	// Create internal text_ft2_source with passed-in properties
+	obs_data_t *text_settings = obs_data_create();
+	obs_data_set_string(text_settings, "text", "ASR Subtitles");
+	// obs_data_apply(text_settings, settings);
+
+	std::string name;
+	do {
+		name = "__asr_internal_text_" + std::to_string(asr_instance_counter++);
+	} while (obs_get_source_by_name(name.c_str()));
+
+	ctx->internal_text_source = obs_source_create("text_ft2_source", name.c_str(), text_settings, nullptr);
+	obs_data_release(text_settings);
+	obs_log(LOG_INFO, "Internal text_ft2_source created with name: %s", name.c_str());
 
 	if (const audio_output_info *info = audio_output_get_info(obs_get_audio())) {
 		ctx->input_sample_rate = info->samples_per_sec;
@@ -184,20 +201,6 @@ static void asr_update(void *data, obs_data_t *settings)
 {
 	auto *ctx = static_cast<asr_source *>(data);
 
-	// Create internal text_ft2_source with passed-in properties
-	obs_data_t *text_settings = obs_data_create();
-	//obs_data_set_string(text_settings, "text", "ASR Subtitles");
-	// obs_data_apply(text_settings, settings);
-
-	std::string name;
-	do {
-		name = "__asr_internal_text_" + std::to_string(asr_instance_counter++);
-	} while (obs_get_source_by_name(name.c_str()));
-
-	ctx->internal_text_source = obs_source_create("text_ft2_source", name.c_str(), text_settings, nullptr);
-	obs_data_release(text_settings);
-	obs_log(LOG_INFO, "Internal text_ft2_source created with name: %s", name.c_str());
-
 	const char *audio_name = obs_data_get_string(settings, "audio_source");
 	if (audio_name)
 		ctx->selected_audio_source = audio_name;
@@ -236,11 +239,6 @@ static uint32_t asr_get_height(void *data) {
 		: 0;
 }
 
-static void asr_defaults(obs_data_t *settings)
-{
-	obs_data_set_default_string(settings, "text", "ASR Subtitles");
-}
-
 static struct obs_source_info asr_source_info = {
 	/* Required */
 	/* id */                    "asr_text_source",
@@ -254,7 +252,7 @@ static struct obs_source_info asr_source_info = {
 	/* get_height */            asr_get_height,
 
 	/* Optional */
-	/* get_defaults */          asr_defaults,
+	/* get_defaults */          nullptr,
 	/* get_properties */        asr_get_properties,
 	/* update */                asr_update,
 	/* activate */              nullptr,
