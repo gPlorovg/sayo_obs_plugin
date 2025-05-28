@@ -62,6 +62,6 @@ Basic concepts of codesigning and notarization on macOS are explained in the cor
 ## How to build and install plugin
 
 ```bash
-./.github/scripts/build-ubuntu 
+./.github/scripts/build-ubuntu --skip-deps
 sudo ./.github/scripts/install_plugin.sh 
 ```
