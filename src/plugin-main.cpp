@@ -4,7 +4,7 @@
 #include <atomic>
 #include <vector>
 #include <samplerate.h>
-#include "../server_gRPC/grpc_client.h"
+#include "server_gRPC/grpc_client.h"
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
@@ -62,6 +62,7 @@ size_t resample_audio(asr_source *ctx, const float *in, size_t in_frames)
 void audio_callback(void *param, [[maybe_unused]] obs_source_t *source, const struct audio_data *audio_data, bool muted)
 {
 	auto *ctx = static_cast<asr_source *>(param);
+	if (!ctx || !ctx->grpc_client || !ctx->grpc_client->IsRunning()) return;
 
 	if (muted)
 		return;
@@ -86,16 +87,34 @@ void audio_callback(void *param, [[maybe_unused]] obs_source_t *source, const st
 		std::vector<float> chunk(ctx->send_buffer.begin(), ctx->send_buffer.begin() + 2560);
 		ctx->send_buffer.erase(ctx->send_buffer.begin(), ctx->send_buffer.begin() + 2560);
 
-		if (ctx->grpc_client && ctx->grpc_client->IsRunning()) {
-			ctx->grpc_client->SendChunk(chunk);
-		}
-
+		ctx->grpc_client->SendChunk(chunk);
 	}
-	/*if (audio_callback_count % 2000 == 0) {
-		obs_log(LOG_INFO,
-			"Every 2000 calls '%s': input = %zu, output = %zu",
-			obs_source_get_name(source), frames, out_frames);
-	}*/
+}
+
+static void asr_update(void *data, obs_data_t *settings)
+{
+	auto *ctx = static_cast<asr_source *>(data);
+
+	if (ctx->grpc_client && !ctx->grpc_client->IsRunning()) ctx->grpc_client->Start();
+
+	const char *audio_name = obs_data_get_string(settings, "audio_source");
+	if (audio_name)
+		ctx->selected_audio_source = audio_name;
+
+	if (ctx->internal_text_source)
+		obs_source_update(ctx->internal_text_source, settings);
+
+	obs_log(LOG_INFO, "Audio source set up: %s", audio_name);
+
+	if (obs_source_t *audio_src = obs_get_source_by_name(ctx->selected_audio_source.c_str())) {
+		obs_source_add_audio_capture_callback(audio_src, audio_callback, ctx);
+		obs_log(LOG_INFO, "Audio callback set up");
+		obs_log(LOG_INFO, "add audio callback: source=%p, ctx=%p", audio_src, ctx);
+		obs_source_release(audio_src);
+	} else {
+		obs_log(LOG_ERROR, "Failed to set up audio callback!");
+		obs_source_release(audio_src);
+	}
 }
 
 static void *asr_create([[maybe_unused]] obs_data_t *settings, [[maybe_unused]] obs_source_t *source)
@@ -107,9 +126,12 @@ static void *asr_create([[maybe_unused]] obs_data_t *settings, [[maybe_unused]] 
 	obs_data_set_string(text_settings, "text", "ASR Subtitles");
 
 	std::string name;
+	obs_source_t *src = nullptr;
 	do {
 		name = "__asr_internal_text_" + std::to_string(asr_instance_counter++);
-	} while (obs_get_source_by_name(name.c_str()));
+		if (src) obs_source_release(src);
+		src = obs_get_source_by_name(name.c_str());
+	} while (src);
 
 	ctx->internal_text_source = obs_source_create("text_ft2_source", name.c_str(), text_settings, nullptr);
 	obs_data_release(text_settings);
@@ -136,8 +158,7 @@ static void *asr_create([[maybe_unused]] obs_data_t *settings, [[maybe_unused]] 
 	ctx->send_buffer.reserve(ctx->audio_chunk_size);
 
 	ctx->grpc_client = new ASRGrpcClient("localhost:50051", ctx);
-	ctx->grpc_client->Start();
-
+	asr_update(ctx, settings);
 	return ctx;
 }
 
@@ -148,12 +169,12 @@ static void asr_destroy(void *data)
 	if (!ctx->selected_audio_source.empty()) {
 		if (obs_source_t *audio_src = obs_get_source_by_name(ctx->selected_audio_source.c_str())) {
 			obs_source_remove_audio_capture_callback(audio_src, audio_callback, ctx);
+			obs_log(LOG_INFO, "audio callback destroyed");
+			obs_log(LOG_INFO, "remove audio callback: source=%p, ctx=%p", audio_src, ctx);
+			obs_source_release(audio_src);
 		}
 	}
 	if (ctx->grpc_client) {
-		obs_log(LOG_INFO, "Calling grpc_client->Stop()");
-		ctx->grpc_client->Stop();
-		obs_log(LOG_INFO, "grpc_client stopped, deleting...");
 		delete ctx->grpc_client;
 		ctx->grpc_client = nullptr;
 	}
@@ -237,27 +258,6 @@ static obs_properties_t *asr_get_properties([[maybe_unused]] void *data)
 	return props;
 }
 
-static void asr_update(void *data, obs_data_t *settings)
-{
-	auto *ctx = static_cast<asr_source *>(data);
-
-	const char *audio_name = obs_data_get_string(settings, "audio_source");
-	if (audio_name)
-		ctx->selected_audio_source = audio_name;
-
-	if (ctx->internal_text_source)
-		obs_source_update(ctx->internal_text_source, settings);
-
-	obs_log(LOG_INFO, "Audio source set up: %s", audio_name);
-
-	if (obs_source_t *audio_src = obs_get_source_by_name(ctx->selected_audio_source.c_str())) {
-		obs_source_add_audio_capture_callback(audio_src, audio_callback, ctx);
-		obs_log(LOG_INFO, "Audio callback set up");
-	} else {
-		obs_log(LOG_ERROR, "Failed to set up audio callback!");
-	}
-}
-
 static void asr_render(void *data,[[maybe_unused]] gs_effect_t *effect)
 {
 	auto *ctx = static_cast<asr_source *>(data);
@@ -281,7 +281,7 @@ static uint32_t asr_get_height(void *data) {
 
 void asr_tick_callback(void *data, [[maybe_unused]] float seconds) {
 	auto *ctx = static_cast<asr_source *>(data);
-	if (ctx->grpc_client && ctx->grpc_client->IsRunning()) {
+	if (ctx && ctx->grpc_client && ctx->grpc_client->IsRunning()) {
 		std::string asr_result;
 		{
 			std::lock_guard<std::mutex> lock(ctx->grpc_client->queue_mutex);

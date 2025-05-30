@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package sayo;
+
+// gRPC сервис для стримингового ASR
+service SayoService {
+  // Клиент шлёт поток AudioChunk, сервер — поток ASRResult
+  rpc StreamingASR(stream AudioChunk) returns (stream ASRResult);
+}
+
+// Сообщение для передачи одного аудиочанка
+message AudioChunk {
+  // raw PCM 32-bit float little-endian mono audio, 16kHz (обычно int16_t)
+  bytes pcm = 1;
+}
+
+// Результат распознавания для сегмента речи
+message ASRResult {
+  string text = 1;        // Текстовая транскрипция сегмента
+}

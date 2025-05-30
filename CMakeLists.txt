@@ -16,10 +16,10 @@ include(helpers)
 
 add_library(${CMAKE_PROJECT_NAME} MODULE
         src/plugin-main.cpp
-        server_gRPC/grpc_client.cpp
-        server_gRPC/grpc_client.h
-        server_gRPC/sayo.pb.cc
-        server_gRPC/sayo.grpc.pb.cc
+        src/server_gRPC/grpc_client.cpp
+        src/server_gRPC/grpc_client.h
+        src/server_gRPC/sayo.pb.cc
+        src/server_gRPC/sayo.grpc.pb.cc
 )
 
 find_package(libobs REQUIRED)
