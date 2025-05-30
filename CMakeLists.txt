@@ -15,7 +15,12 @@ include(defaults)
 include(helpers)
 
 add_library(${CMAKE_PROJECT_NAME} MODULE
-        src/plugin-main.cpp)
+        src/plugin-main.cpp
+        server_gRPC/grpc_client.cpp
+        server_gRPC/grpc_client.h
+        server_gRPC/sayo.pb.cc
+        server_gRPC/sayo.grpc.pb.cc
+)
 
 find_package(libobs REQUIRED)
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OBS::libobs)
@@ -48,4 +53,22 @@ link_directories(${SAMPLERATE_LIBRARY_DIRS})
 
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE ${SAMPLERATE_LIBRARIES})
 
+# === Protobuf ===
+find_package(Protobuf REQUIRED)
+target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${Protobuf_INCLUDE_DIRS})
 
+# === gRPC ===
+find_package(gRPC REQUIRED)
+
+# === Добавить к библиотеке все нужные файлы (если ещё не добавил) ===
+# add_library(${CMAKE_PROJECT_NAME} MODULE ... server_gRPC/sayo.pb.cc server_gRPC/sayo.grpc.pb.cc)
+
+# === Самое главное: линкуем все зависимости ===
+target_link_libraries(${CMAKE_PROJECT_NAME}
+        PRIVATE
+        OBS::libobs
+        ${SAMPLERATE_LIBRARIES}
+        ${Protobuf_LIBRARIES}
+        gRPC::grpc++
+        gRPC::grpc
+)

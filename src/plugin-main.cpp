@@ -4,12 +4,12 @@
 #include <atomic>
 #include <vector>
 #include <samplerate.h>
+#include "../server_gRPC/grpc_client.h"
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 
 static std::atomic<int> asr_instance_counter{0};
-static int audio_callback_count{0};
 
 struct asr_source {
 	std::string selected_audio_source;
@@ -23,7 +23,13 @@ struct asr_source {
 
 	std::vector<float> resample_input_buffer;
 	std::vector<float> resample_output_buffer;
+
+	int audio_chunk_size = target_sample_rate / 1000 * 160;
+	std::vector<float> send_buffer;
+
 	int resampler_warmed_up = 5;
+
+	ASRGrpcClient* grpc_client = nullptr;
 };
 
 static const char *asr_get_name([[maybe_unused]] void *unused)
@@ -53,7 +59,7 @@ size_t resample_audio(asr_source *ctx, const float *in, size_t in_frames)
 	return src_data.output_frames_gen;
 }
 
-void audio_callback(void *param, obs_source_t *source, const struct audio_data *audio_data, bool muted)
+void audio_callback(void *param, [[maybe_unused]] obs_source_t *source, const struct audio_data *audio_data, bool muted)
 {
 	auto *ctx = static_cast<asr_source *>(param);
 
@@ -64,15 +70,32 @@ void audio_callback(void *param, obs_source_t *source, const struct audio_data *
 	const size_t frames = audio_data->frames;
 
 	const size_t out_frames = resample_audio(ctx, samples, frames);
+
 	if (ctx->resampler_warmed_up != 0) {
 		ctx->resampler_warmed_up--;
 		return;
 	}
-	if (audio_callback_count % 2000 == 0) {
+
+	ctx->send_buffer.insert(
+		ctx->send_buffer.end(),
+		ctx->resample_output_buffer.begin(),
+		ctx->resample_output_buffer.begin() + static_cast<std::vector<float>::difference_type>(out_frames)
+	);
+
+	while (ctx->send_buffer.size() >= 2560) {
+		std::vector<float> chunk(ctx->send_buffer.begin(), ctx->send_buffer.begin() + 2560);
+		ctx->send_buffer.erase(ctx->send_buffer.begin(), ctx->send_buffer.begin() + 2560);
+
+		if (ctx->grpc_client && ctx->grpc_client->IsRunning()) {
+			ctx->grpc_client->SendChunk(chunk);
+		}
+
+	}
+	/*if (audio_callback_count % 2000 == 0) {
 		obs_log(LOG_INFO,
 			"Every 2000 calls '%s': input = %zu, output = %zu",
 			obs_source_get_name(source), frames, out_frames);
-	}
+	}*/
 }
 
 static void *asr_create([[maybe_unused]] obs_data_t *settings, [[maybe_unused]] obs_source_t *source)
@@ -82,7 +105,6 @@ static void *asr_create([[maybe_unused]] obs_data_t *settings, [[maybe_unused]] 
 	// Create internal text_ft2_source with passed-in properties
 	obs_data_t *text_settings = obs_data_create();
 	obs_data_set_string(text_settings, "text", "ASR Subtitles");
-	// obs_data_apply(text_settings, settings);
 
 	std::string name;
 	do {
@@ -111,12 +133,30 @@ static void *asr_create([[maybe_unused]] obs_data_t *settings, [[maybe_unused]] 
 		obs_log(LOG_INFO, "Resampler created");
 	}
 
+	ctx->send_buffer.reserve(ctx->audio_chunk_size);
+
+	ctx->grpc_client = new ASRGrpcClient("localhost:50051", ctx);
+	ctx->grpc_client->Start();
+
 	return ctx;
 }
 
 static void asr_destroy(void *data)
 {
 	auto *ctx = static_cast<asr_source *>(data);
+
+	if (!ctx->selected_audio_source.empty()) {
+		if (obs_source_t *audio_src = obs_get_source_by_name(ctx->selected_audio_source.c_str())) {
+			obs_source_remove_audio_capture_callback(audio_src, audio_callback, ctx);
+		}
+	}
+	if (ctx->grpc_client) {
+		obs_log(LOG_INFO, "Calling grpc_client->Stop()");
+		ctx->grpc_client->Stop();
+		obs_log(LOG_INFO, "grpc_client stopped, deleting...");
+		delete ctx->grpc_client;
+		ctx->grpc_client = nullptr;
+	}
 	if (ctx->internal_text_source)
 		obs_source_release(ctx->internal_text_source);
 	if (ctx->resampler)
@@ -239,6 +279,27 @@ static uint32_t asr_get_height(void *data) {
 		: 0;
 }
 
+void asr_tick_callback(void *data, [[maybe_unused]] float seconds) {
+	auto *ctx = static_cast<asr_source *>(data);
+	if (ctx->grpc_client && ctx->grpc_client->IsRunning()) {
+		std::string asr_result;
+		{
+			std::lock_guard<std::mutex> lock(ctx->grpc_client->queue_mutex);
+			if (!ctx->grpc_client->asr_results_queue.empty()) {
+				asr_result = ctx->grpc_client->asr_results_queue.front();
+				ctx->grpc_client->asr_results_queue.pop();
+			}
+		}
+		if (!asr_result.empty() && ctx->internal_text_source) {
+			obs_data_t *settings = obs_source_get_settings(ctx->internal_text_source);
+			obs_data_set_string(settings, "text", asr_result.c_str());
+			obs_source_update(ctx->internal_text_source, settings);
+			obs_data_release(settings);
+		}
+	}
+}
+
+
 static struct obs_source_info asr_source_info = {
 	/* Required */
 	/* id */                    "asr_text_source",
@@ -259,7 +320,7 @@ static struct obs_source_info asr_source_info = {
 	/* deactivate */            nullptr,
 	/* show */                  nullptr,
 	/* hide */                  nullptr,
-	/* video_tick */            nullptr,
+	/* video_tick */            asr_tick_callback,
 	/* video_render */          asr_render
 };
 
