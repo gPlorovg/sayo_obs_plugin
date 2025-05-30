@@ -23,6 +23,7 @@ namespace sayo {
 
 static const char* SayoService_method_names[] = {
   "/sayo.SayoService/StreamingASR",
+  "/sayo.SayoService/Ping",
 };
 
 std::unique_ptr< SayoService::Stub> SayoService::NewStub(const std::shared_ptr< ::grpc::ChannelInterface>& channel, const ::grpc::StubOptions& options) {
@@ -33,6 +34,7 @@ std::unique_ptr< SayoService::Stub> SayoService::NewStub(const std::shared_ptr< 
 
 SayoService::Stub::Stub(const std::shared_ptr< ::grpc::ChannelInterface>& channel, const ::grpc::StubOptions& options)
   : channel_(channel), rpcmethod_StreamingASR_(SayoService_method_names[0], options.suffix_for_stats(),::grpc::internal::RpcMethod::BIDI_STREAMING, channel)
+  , rpcmethod_Ping_(SayoService_method_names[1], options.suffix_for_stats(),::grpc::internal::RpcMethod::NORMAL_RPC, channel)
   {}
 
 ::grpc::ClientReaderWriter< ::sayo::AudioChunk, ::sayo::ASRResult>* SayoService::Stub::StreamingASRRaw(::grpc::ClientContext* context) {
@@ -51,6 +53,29 @@ void SayoService::Stub::async::StreamingASR(::grpc::ClientContext* context, ::gr
   return ::grpc::internal::ClientAsyncReaderWriterFactory< ::sayo::AudioChunk, ::sayo::ASRResult>::Create(channel_.get(), cq, rpcmethod_StreamingASR_, context, false, nullptr);
 }
 
+::grpc::Status SayoService::Stub::Ping(::grpc::ClientContext* context, const ::sayo::PingRequest& request, ::sayo::PingResponse* response) {
+  return ::grpc::internal::BlockingUnaryCall< ::sayo::PingRequest, ::sayo::PingResponse, ::grpc::protobuf::MessageLite, ::grpc::protobuf::MessageLite>(channel_.get(), rpcmethod_Ping_, context, request, response);
+}
+
+void SayoService::Stub::async::Ping(::grpc::ClientContext* context, const ::sayo::PingRequest* request, ::sayo::PingResponse* response, std::function<void(::grpc::Status)> f) {
+  ::grpc::internal::CallbackUnaryCall< ::sayo::PingRequest, ::sayo::PingResponse, ::grpc::protobuf::MessageLite, ::grpc::protobuf::MessageLite>(stub_->channel_.get(), stub_->rpcmethod_Ping_, context, request, response, std::move(f));
+}
+
+void SayoService::Stub::async::Ping(::grpc::ClientContext* context, const ::sayo::PingRequest* request, ::sayo::PingResponse* response, ::grpc::ClientUnaryReactor* reactor) {
+  ::grpc::internal::ClientCallbackUnaryFactory::Create< ::grpc::protobuf::MessageLite, ::grpc::protobuf::MessageLite>(stub_->channel_.get(), stub_->rpcmethod_Ping_, context, request, response, reactor);
+}
+
+::grpc::ClientAsyncResponseReader< ::sayo::PingResponse>* SayoService::Stub::PrepareAsyncPingRaw(::grpc::ClientContext* context, const ::sayo::PingRequest& request, ::grpc::CompletionQueue* cq) {
+  return ::grpc::internal::ClientAsyncResponseReaderHelper::Create< ::sayo::PingResponse, ::sayo::PingRequest, ::grpc::protobuf::MessageLite, ::grpc::protobuf::MessageLite>(channel_.get(), cq, rpcmethod_Ping_, context, request);
+}
+
+::grpc::ClientAsyncResponseReader< ::sayo::PingResponse>* SayoService::Stub::AsyncPingRaw(::grpc::ClientContext* context, const ::sayo::PingRequest& request, ::grpc::CompletionQueue* cq) {
+  auto* result =
+    this->PrepareAsyncPingRaw(context, request, cq);
+  result->StartCall();
+  return result;
+}
+
 SayoService::Service::Service() {
   AddMethod(new ::grpc::internal::RpcServiceMethod(
       SayoService_method_names[0],
@@ -62,6 +87,16 @@ SayoService::Service::Service() {
              ::sayo::AudioChunk>* stream) {
                return service->StreamingASR(ctx, stream);
              }, this)));
+  AddMethod(new ::grpc::internal::RpcServiceMethod(
+      SayoService_method_names[1],
+      ::grpc::internal::RpcMethod::NORMAL_RPC,
+      new ::grpc::internal::RpcMethodHandler< SayoService::Service, ::sayo::PingRequest, ::sayo::PingResponse, ::grpc::protobuf::MessageLite, ::grpc::protobuf::MessageLite>(
+          [](SayoService::Service* service,
+             ::grpc::ServerContext* ctx,
+             const ::sayo::PingRequest* req,
+             ::sayo::PingResponse* resp) {
+               return service->Ping(ctx, req, resp);
+             }, this)));
 }
 
 SayoService::Service::~Service() {
@@ -70,6 +105,13 @@ SayoService::Service::~Service() {
 ::grpc::Status SayoService::Service::StreamingASR(::grpc::ServerContext* context, ::grpc::ServerReaderWriter< ::sayo::ASRResult, ::sayo::AudioChunk>* stream) {
   (void) context;
   (void) stream;
+  return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+}
+
+::grpc::Status SayoService::Service::Ping(::grpc::ServerContext* context, const ::sayo::PingRequest* request, ::sayo::PingResponse* response) {
+  (void) context;
+  (void) request;
+  (void) response;
   return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
 }
 

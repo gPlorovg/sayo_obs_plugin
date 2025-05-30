@@ -46,11 +46,22 @@ class SayoService final {
     std::unique_ptr< ::grpc::ClientAsyncReaderWriterInterface< ::sayo::AudioChunk, ::sayo::ASRResult>> PrepareAsyncStreamingASR(::grpc::ClientContext* context, ::grpc::CompletionQueue* cq) {
       return std::unique_ptr< ::grpc::ClientAsyncReaderWriterInterface< ::sayo::AudioChunk, ::sayo::ASRResult>>(PrepareAsyncStreamingASRRaw(context, cq));
     }
+    // Проверка подключения
+    virtual ::grpc::Status Ping(::grpc::ClientContext* context, const ::sayo::PingRequest& request, ::sayo::PingResponse* response) = 0;
+    std::unique_ptr< ::grpc::ClientAsyncResponseReaderInterface< ::sayo::PingResponse>> AsyncPing(::grpc::ClientContext* context, const ::sayo::PingRequest& request, ::grpc::CompletionQueue* cq) {
+      return std::unique_ptr< ::grpc::ClientAsyncResponseReaderInterface< ::sayo::PingResponse>>(AsyncPingRaw(context, request, cq));
+    }
+    std::unique_ptr< ::grpc::ClientAsyncResponseReaderInterface< ::sayo::PingResponse>> PrepareAsyncPing(::grpc::ClientContext* context, const ::sayo::PingRequest& request, ::grpc::CompletionQueue* cq) {
+      return std::unique_ptr< ::grpc::ClientAsyncResponseReaderInterface< ::sayo::PingResponse>>(PrepareAsyncPingRaw(context, request, cq));
+    }
     class async_interface {
      public:
       virtual ~async_interface() {}
       // Клиент шлёт поток AudioChunk, сервер — поток ASRResult
       virtual void StreamingASR(::grpc::ClientContext* context, ::grpc::ClientBidiReactor< ::sayo::AudioChunk,::sayo::ASRResult>* reactor) = 0;
+      // Проверка подключения
+      virtual void Ping(::grpc::ClientContext* context, const ::sayo::PingRequest* request, ::sayo::PingResponse* response, std::function<void(::grpc::Status)>) = 0;
+      virtual void Ping(::grpc::ClientContext* context, const ::sayo::PingRequest* request, ::sayo::PingResponse* response, ::grpc::ClientUnaryReactor* reactor) = 0;
     };
     typedef class async_interface experimental_async_interface;
     virtual class async_interface* async() { return nullptr; }
@@ -59,6 +70,8 @@ class SayoService final {
     virtual ::grpc::ClientReaderWriterInterface< ::sayo::AudioChunk, ::sayo::ASRResult>* StreamingASRRaw(::grpc::ClientContext* context) = 0;
     virtual ::grpc::ClientAsyncReaderWriterInterface< ::sayo::AudioChunk, ::sayo::ASRResult>* AsyncStreamingASRRaw(::grpc::ClientContext* context, ::grpc::CompletionQueue* cq, void* tag) = 0;
     virtual ::grpc::ClientAsyncReaderWriterInterface< ::sayo::AudioChunk, ::sayo::ASRResult>* PrepareAsyncStreamingASRRaw(::grpc::ClientContext* context, ::grpc::CompletionQueue* cq) = 0;
+    virtual ::grpc::ClientAsyncResponseReaderInterface< ::sayo::PingResponse>* AsyncPingRaw(::grpc::ClientContext* context, const ::sayo::PingRequest& request, ::grpc::CompletionQueue* cq) = 0;
+    virtual ::grpc::ClientAsyncResponseReaderInterface< ::sayo::PingResponse>* PrepareAsyncPingRaw(::grpc::ClientContext* context, const ::sayo::PingRequest& request, ::grpc::CompletionQueue* cq) = 0;
   };
   class Stub final : public StubInterface {
    public:
@@ -72,10 +85,19 @@ class SayoService final {
     std::unique_ptr<  ::grpc::ClientAsyncReaderWriter< ::sayo::AudioChunk, ::sayo::ASRResult>> PrepareAsyncStreamingASR(::grpc::ClientContext* context, ::grpc::CompletionQueue* cq) {
       return std::unique_ptr< ::grpc::ClientAsyncReaderWriter< ::sayo::AudioChunk, ::sayo::ASRResult>>(PrepareAsyncStreamingASRRaw(context, cq));
     }
+    ::grpc::Status Ping(::grpc::ClientContext* context, const ::sayo::PingRequest& request, ::sayo::PingResponse* response) override;
+    std::unique_ptr< ::grpc::ClientAsyncResponseReader< ::sayo::PingResponse>> AsyncPing(::grpc::ClientContext* context, const ::sayo::PingRequest& request, ::grpc::CompletionQueue* cq) {
+      return std::unique_ptr< ::grpc::ClientAsyncResponseReader< ::sayo::PingResponse>>(AsyncPingRaw(context, request, cq));
+    }
+    std::unique_ptr< ::grpc::ClientAsyncResponseReader< ::sayo::PingResponse>> PrepareAsyncPing(::grpc::ClientContext* context, const ::sayo::PingRequest& request, ::grpc::CompletionQueue* cq) {
+      return std::unique_ptr< ::grpc::ClientAsyncResponseReader< ::sayo::PingResponse>>(PrepareAsyncPingRaw(context, request, cq));
+    }
     class async final :
       public StubInterface::async_interface {
      public:
       void StreamingASR(::grpc::ClientContext* context, ::grpc::ClientBidiReactor< ::sayo::AudioChunk,::sayo::ASRResult>* reactor) override;
+      void Ping(::grpc::ClientContext* context, const ::sayo::PingRequest* request, ::sayo::PingResponse* response, std::function<void(::grpc::Status)>) override;
+      void Ping(::grpc::ClientContext* context, const ::sayo::PingRequest* request, ::sayo::PingResponse* response, ::grpc::ClientUnaryReactor* reactor) override;
      private:
       friend class Stub;
       explicit async(Stub* stub): stub_(stub) { }
@@ -90,7 +112,10 @@ class SayoService final {
     ::grpc::ClientReaderWriter< ::sayo::AudioChunk, ::sayo::ASRResult>* StreamingASRRaw(::grpc::ClientContext* context) override;
     ::grpc::ClientAsyncReaderWriter< ::sayo::AudioChunk, ::sayo::ASRResult>* AsyncStreamingASRRaw(::grpc::ClientContext* context, ::grpc::CompletionQueue* cq, void* tag) override;
     ::grpc::ClientAsyncReaderWriter< ::sayo::AudioChunk, ::sayo::ASRResult>* PrepareAsyncStreamingASRRaw(::grpc::ClientContext* context, ::grpc::CompletionQueue* cq) override;
+    ::grpc::ClientAsyncResponseReader< ::sayo::PingResponse>* AsyncPingRaw(::grpc::ClientContext* context, const ::sayo::PingRequest& request, ::grpc::CompletionQueue* cq) override;
+    ::grpc::ClientAsyncResponseReader< ::sayo::PingResponse>* PrepareAsyncPingRaw(::grpc::ClientContext* context, const ::sayo::PingRequest& request, ::grpc::CompletionQueue* cq) override;
     const ::grpc::internal::RpcMethod rpcmethod_StreamingASR_;
+    const ::grpc::internal::RpcMethod rpcmethod_Ping_;
   };
   static std::unique_ptr<Stub> NewStub(const std::shared_ptr< ::grpc::ChannelInterface>& channel, const ::grpc::StubOptions& options = ::grpc::StubOptions());
 
@@ -100,6 +125,8 @@ class SayoService final {
     virtual ~Service();
     // Клиент шлёт поток AudioChunk, сервер — поток ASRResult
     virtual ::grpc::Status StreamingASR(::grpc::ServerContext* context, ::grpc::ServerReaderWriter< ::sayo::ASRResult, ::sayo::AudioChunk>* stream);
+    // Проверка подключения
+    virtual ::grpc::Status Ping(::grpc::ServerContext* context, const ::sayo::PingRequest* request, ::sayo::PingResponse* response);
   };
   template <class BaseClass>
   class WithAsyncMethod_StreamingASR : public BaseClass {
@@ -121,7 +148,27 @@ class SayoService final {
       ::grpc::Service::RequestAsyncBidiStreaming(0, context, stream, new_call_cq, notification_cq, tag);
     }
   };
-  typedef WithAsyncMethod_StreamingASR<Service > AsyncService;
+  template <class BaseClass>
+  class WithAsyncMethod_Ping : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithAsyncMethod_Ping() {
+      ::grpc::Service::MarkMethodAsync(1);
+    }
+    ~WithAsyncMethod_Ping() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable synchronous version of this method
+    ::grpc::Status Ping(::grpc::ServerContext* /*context*/, const ::sayo::PingRequest* /*request*/, ::sayo::PingResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+    void RequestPing(::grpc::ServerContext* context, ::sayo::PingRequest* request, ::grpc::ServerAsyncResponseWriter< ::sayo::PingResponse>* response, ::grpc::CompletionQueue* new_call_cq, ::grpc::ServerCompletionQueue* notification_cq, void *tag) {
+      ::grpc::Service::RequestAsyncUnary(1, context, request, response, new_call_cq, notification_cq, tag);
+    }
+  };
+  typedef WithAsyncMethod_StreamingASR<WithAsyncMethod_Ping<Service > > AsyncService;
   template <class BaseClass>
   class WithCallbackMethod_StreamingASR : public BaseClass {
    private:
@@ -145,7 +192,34 @@ class SayoService final {
       ::grpc::CallbackServerContext* /*context*/)
       { return nullptr; }
   };
-  typedef WithCallbackMethod_StreamingASR<Service > CallbackService;
+  template <class BaseClass>
+  class WithCallbackMethod_Ping : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithCallbackMethod_Ping() {
+      ::grpc::Service::MarkMethodCallback(1,
+          new ::grpc::internal::CallbackUnaryHandler< ::sayo::PingRequest, ::sayo::PingResponse>(
+            [this](
+                   ::grpc::CallbackServerContext* context, const ::sayo::PingRequest* request, ::sayo::PingResponse* response) { return this->Ping(context, request, response); }));}
+    void SetMessageAllocatorFor_Ping(
+        ::grpc::MessageAllocator< ::sayo::PingRequest, ::sayo::PingResponse>* allocator) {
+      ::grpc::internal::MethodHandler* const handler = ::grpc::Service::GetHandler(1);
+      static_cast<::grpc::internal::CallbackUnaryHandler< ::sayo::PingRequest, ::sayo::PingResponse>*>(handler)
+              ->SetMessageAllocator(allocator);
+    }
+    ~WithCallbackMethod_Ping() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable synchronous version of this method
+    ::grpc::Status Ping(::grpc::ServerContext* /*context*/, const ::sayo::PingRequest* /*request*/, ::sayo::PingResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+    virtual ::grpc::ServerUnaryReactor* Ping(
+      ::grpc::CallbackServerContext* /*context*/, const ::sayo::PingRequest* /*request*/, ::sayo::PingResponse* /*response*/)  { return nullptr; }
+  };
+  typedef WithCallbackMethod_StreamingASR<WithCallbackMethod_Ping<Service > > CallbackService;
   typedef CallbackService ExperimentalCallbackService;
   template <class BaseClass>
   class WithGenericMethod_StreamingASR : public BaseClass {
@@ -160,6 +234,23 @@ class SayoService final {
     }
     // disable synchronous version of this method
     ::grpc::Status StreamingASR(::grpc::ServerContext* /*context*/, ::grpc::ServerReaderWriter< ::sayo::ASRResult, ::sayo::AudioChunk>* /*stream*/)  override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+  };
+  template <class BaseClass>
+  class WithGenericMethod_Ping : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithGenericMethod_Ping() {
+      ::grpc::Service::MarkMethodGeneric(1);
+    }
+    ~WithGenericMethod_Ping() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable synchronous version of this method
+    ::grpc::Status Ping(::grpc::ServerContext* /*context*/, const ::sayo::PingRequest* /*request*/, ::sayo::PingResponse* /*response*/) override {
       abort();
       return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
     }
@@ -185,6 +276,26 @@ class SayoService final {
     }
   };
   template <class BaseClass>
+  class WithRawMethod_Ping : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithRawMethod_Ping() {
+      ::grpc::Service::MarkMethodRaw(1);
+    }
+    ~WithRawMethod_Ping() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable synchronous version of this method
+    ::grpc::Status Ping(::grpc::ServerContext* /*context*/, const ::sayo::PingRequest* /*request*/, ::sayo::PingResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+    void RequestPing(::grpc::ServerContext* context, ::grpc::ByteBuffer* request, ::grpc::ServerAsyncResponseWriter< ::grpc::ByteBuffer>* response, ::grpc::CompletionQueue* new_call_cq, ::grpc::ServerCompletionQueue* notification_cq, void *tag) {
+      ::grpc::Service::RequestAsyncUnary(1, context, request, response, new_call_cq, notification_cq, tag);
+    }
+  };
+  template <class BaseClass>
   class WithRawCallbackMethod_StreamingASR : public BaseClass {
    private:
     void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
@@ -207,9 +318,58 @@ class SayoService final {
       ::grpc::CallbackServerContext* /*context*/)
       { return nullptr; }
   };
-  typedef Service StreamedUnaryService;
+  template <class BaseClass>
+  class WithRawCallbackMethod_Ping : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithRawCallbackMethod_Ping() {
+      ::grpc::Service::MarkMethodRawCallback(1,
+          new ::grpc::internal::CallbackUnaryHandler< ::grpc::ByteBuffer, ::grpc::ByteBuffer>(
+            [this](
+                   ::grpc::CallbackServerContext* context, const ::grpc::ByteBuffer* request, ::grpc::ByteBuffer* response) { return this->Ping(context, request, response); }));
+    }
+    ~WithRawCallbackMethod_Ping() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable synchronous version of this method
+    ::grpc::Status Ping(::grpc::ServerContext* /*context*/, const ::sayo::PingRequest* /*request*/, ::sayo::PingResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+    virtual ::grpc::ServerUnaryReactor* Ping(
+      ::grpc::CallbackServerContext* /*context*/, const ::grpc::ByteBuffer* /*request*/, ::grpc::ByteBuffer* /*response*/)  { return nullptr; }
+  };
+  template <class BaseClass>
+  class WithStreamedUnaryMethod_Ping : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithStreamedUnaryMethod_Ping() {
+      ::grpc::Service::MarkMethodStreamed(1,
+        new ::grpc::internal::StreamedUnaryHandler<
+          ::sayo::PingRequest, ::sayo::PingResponse>(
+            [this](::grpc::ServerContext* context,
+                   ::grpc::ServerUnaryStreamer<
+                     ::sayo::PingRequest, ::sayo::PingResponse>* streamer) {
+                       return this->StreamedPing(context,
+                         streamer);
+                  }));
+    }
+    ~WithStreamedUnaryMethod_Ping() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable regular version of this method
+    ::grpc::Status Ping(::grpc::ServerContext* /*context*/, const ::sayo::PingRequest* /*request*/, ::sayo::PingResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+    // replace default version of method with streamed unary
+    virtual ::grpc::Status StreamedPing(::grpc::ServerContext* context, ::grpc::ServerUnaryStreamer< ::sayo::PingRequest,::sayo::PingResponse>* server_unary_streamer) = 0;
+  };
+  typedef WithStreamedUnaryMethod_Ping<Service > StreamedUnaryService;
   typedef Service SplitStreamedService;
-  typedef Service StreamedService;
+  typedef WithStreamedUnaryMethod_Ping<Service > StreamedService;
 };
 
 }  // namespace sayo

@@ -6,6 +6,8 @@ package sayo;
 service SayoService {
   // Клиент шлёт поток AudioChunk, сервер — поток ASRResult
   rpc StreamingASR(stream AudioChunk) returns (stream ASRResult);
+  // Проверка подключения
+  rpc Ping (PingRequest) returns (PingResponse);
 }
 
 // Сообщение для передачи одного аудиочанка
@@ -17,4 +19,9 @@ message AudioChunk {
 // Результат распознавания для сегмента речи
 message ASRResult {
   string text = 1;        // Текстовая транскрипция сегмента
+}
+
+message PingRequest {}
+message PingResponse {
+    string message = 1; // Отвечает pong
 }

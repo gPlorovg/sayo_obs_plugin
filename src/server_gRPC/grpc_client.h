@@ -28,6 +28,7 @@ public:
     void Stop();
     void SendChunk(const std::vector<float>& chunk);
     bool IsRunning();
+    [[nodiscard]] bool TestConnection() const;
 
     std::queue<std::string> asr_results_queue;
     std::mutex queue_mutex;

@@ -58,7 +58,7 @@ void ASRGrpcClient::SenderLoop() {
         {
             std::unique_lock<std::mutex> lock(queue_mutex);
             cv_.wait(lock, [&] { return !audio_queue_.empty() || !running_; });
-            if (audio_queue_.empty() && !running_) break;
+            if (!running_ && audio_queue_.empty()) break;
             chunk = std::move(audio_queue_.front());
             audio_queue_.pop();
         }
@@ -83,4 +83,22 @@ void ASRGrpcClient::ReceiverLoop() {
 
 bool ASRGrpcClient::IsRunning() {
     return running_;
+}
+
+bool ASRGrpcClient::TestConnection() const {
+    grpc::ClientContext ctx;
+
+    auto deadline = std::chrono::system_clock::now() + std::chrono::milliseconds(560 * 10);
+    ctx.set_deadline(deadline);
+
+    sayo::PingRequest req;
+    sayo::PingResponse resp;
+    grpc::Status status = stub_->Ping(&ctx, req, &resp);
+
+    if (status.ok()) {
+        obs_log(LOG_INFO, "gRPC Ping OK: %s", resp.message().c_str());
+        return true;
+    }
+    obs_log(LOG_ERROR, "gRPC Ping FAILED: %s", status.error_message().c_str());
+    return false;
 }

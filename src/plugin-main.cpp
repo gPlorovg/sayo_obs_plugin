@@ -95,6 +95,16 @@ static void asr_update(void *data, obs_data_t *settings)
 {
 	auto *ctx = static_cast<asr_source *>(data);
 
+	if (!ctx->grpc_client) {
+		ctx->grpc_client = new ASRGrpcClient("localhost:50051", ctx);
+		if (!ctx->grpc_client->TestConnection()) {
+			obs_log(LOG_ERROR, "Unable to connect to gRPC server!");
+			delete ctx->grpc_client;
+			ctx->grpc_client = nullptr;
+			return;
+		}
+	}
+
 	if (ctx->grpc_client && !ctx->grpc_client->IsRunning()) ctx->grpc_client->Start();
 
 	const char *audio_name = obs_data_get_string(settings, "audio_source");
@@ -109,7 +119,6 @@ static void asr_update(void *data, obs_data_t *settings)
 	if (obs_source_t *audio_src = obs_get_source_by_name(ctx->selected_audio_source.c_str())) {
 		obs_source_add_audio_capture_callback(audio_src, audio_callback, ctx);
 		obs_log(LOG_INFO, "Audio callback set up");
-		obs_log(LOG_INFO, "add audio callback: source=%p, ctx=%p", audio_src, ctx);
 		obs_source_release(audio_src);
 	} else {
 		obs_log(LOG_ERROR, "Failed to set up audio callback!");
@@ -157,7 +166,6 @@ static void *asr_create([[maybe_unused]] obs_data_t *settings, [[maybe_unused]] 
 
 	ctx->send_buffer.reserve(ctx->audio_chunk_size);
 
-	ctx->grpc_client = new ASRGrpcClient("localhost:50051", ctx);
 	asr_update(ctx, settings);
 	return ctx;
 }

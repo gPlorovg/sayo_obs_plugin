@@ -64,9 +64,11 @@ find_package(gRPC REQUIRED)
 # add_library(${CMAKE_PROJECT_NAME} MODULE ... server_gRPC/sayo.pb.cc server_gRPC/sayo.grpc.pb.cc)
 
 # === Самое главное: линкуем все зависимости ===
+
+
 target_link_libraries(${CMAKE_PROJECT_NAME}
         PRIVATE
-        OBS::libobs
+        /home/plorov/protobuf/build/third_party/utf8_range/libutf8_validity.a
         ${SAMPLERATE_LIBRARIES}
         ${Protobuf_LIBRARIES}
         gRPC::grpc++
