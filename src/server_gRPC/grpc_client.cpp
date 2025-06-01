@@ -29,12 +29,14 @@ void ASRGrpcClient::Stop() {
     if (!running_) return;
     running_ = false;
     cv_.notify_all();
+
+    if (context_) context_->TryCancel();
+    if (stream_) stream_->WritesDone();
+
     if (sender_thread_.joinable()) sender_thread_.join();
     if (receiver_thread_.joinable()) receiver_thread_.join();
 
     if (stream_) {
-        stream_->WritesDone();
-        if (context_) context_->TryCancel();
         grpc::Status status = stream_->Finish();
         obs_log(LOG_ERROR, "grpc_client: Finished with status: %s", status.error_message().c_str());
     }
@@ -58,7 +60,7 @@ void ASRGrpcClient::SenderLoop() {
         {
             std::unique_lock<std::mutex> lock(queue_mutex);
             cv_.wait(lock, [&] { return !audio_queue_.empty() || !running_; });
-            if (!running_ && audio_queue_.empty()) break;
+            if (!running_) break;
             chunk = std::move(audio_queue_.front());
             audio_queue_.pop();
         }
@@ -68,17 +70,25 @@ void ASRGrpcClient::SenderLoop() {
             obs_log(LOG_ERROR, "Failed to write audio chunk");
         }
     }
+    obs_log(LOG_INFO, "SenderLoop: finished");
 }
 
 void ASRGrpcClient::ReceiverLoop() {
     sayo::ASRResult result;
-    while (running_ && stream_ && stream_->Read(&result)) {
+    while (running_ && stream_) {
+        if (!stream_->Read(&result)) {
+            obs_log(LOG_INFO, "ReceiverLoop: stream_->Read returned false, exiting loop");
+            break;
+        }
+        if (!running_) break;
+
         const std::string &text = result.text();
         if (!text.empty()) {
             std::lock_guard<std::mutex> lock(queue_mutex);
             asr_results_queue.push(text);
         }
     }
+    obs_log(LOG_INFO, "ReceiverLoop: finished");
 }
 
 bool ASRGrpcClient::IsRunning() {
