@@ -12,7 +12,7 @@ service SayoService {
 
 // Сообщение для передачи одного аудиочанка
 message AudioChunk {
-  // raw PCM 32-bit float little-endian mono audio, 16kHz (обычно int16_t)
+  // raw PCM 32-bit float little-endian mono audio, 16kHz
   bytes pcm = 1;
 }
 

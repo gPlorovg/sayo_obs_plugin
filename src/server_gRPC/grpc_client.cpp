@@ -41,7 +41,7 @@ void ASRGrpcClient::Stop() {
 }
 
 
-void ASRGrpcClient::SendChunk(const std::vector<float>& chunk) {
+void ASRGrpcClient::SendChunk(const std::vector<char>& chunk) {
     if (!stream_ || !running_) return;
 
     {
@@ -54,7 +54,7 @@ void ASRGrpcClient::SendChunk(const std::vector<float>& chunk) {
 void ASRGrpcClient::SenderLoop() {
 
     while (running_ && stream_) {
-        std::vector<float> chunk;
+        std::vector<char> chunk;
         {
             std::unique_lock<std::mutex> lock(queue_mutex);
             cv_.wait(lock, [&] { return !audio_queue_.empty() || !running_; });
@@ -63,7 +63,7 @@ void ASRGrpcClient::SenderLoop() {
             audio_queue_.pop();
         }
         sayo::AudioChunk msg;
-        msg.set_pcm(reinterpret_cast<const char*>(chunk.data()), chunk.size() * sizeof(float));
+        msg.set_pcm(reinterpret_cast<const char*>(chunk.data()), chunk.size());
         if (!stream_->Write(msg)) {
             obs_log(LOG_ERROR, "Failed to write audio chunk");
         }

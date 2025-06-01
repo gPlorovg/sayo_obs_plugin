@@ -24,8 +24,8 @@ struct asr_source {
 	std::vector<float> resample_input_buffer;
 	std::vector<float> resample_output_buffer;
 
-	int audio_chunk_size = target_sample_rate / 1000 * 160;
-	std::vector<float> send_buffer;
+	size_t audio_chunk_size = (target_sample_rate / 1000 * 160) * sizeof(float);
+	std::vector<char> send_buffer;
 
 	int resampler_warmed_up = 5;
 
@@ -62,30 +62,41 @@ size_t resample_audio(asr_source *ctx, const float *in, size_t in_frames)
 void audio_callback(void *param, [[maybe_unused]] obs_source_t *source, const struct audio_data *audio_data, bool muted)
 {
 	auto *ctx = static_cast<asr_source *>(param);
+
 	if (!ctx || !ctx->grpc_client || !ctx->grpc_client->IsRunning()) return;
+	if (muted) return;
+	if (audio_data->frames == 1200) return;
 
-	if (muted)
-		return;
-
-	auto *samples = reinterpret_cast<const float *>(audio_data->data[0]);
 	const size_t frames = audio_data->frames;
+	std::vector<float> mono(frames);
 
-	const size_t out_frames = resample_audio(ctx, samples, frames);
+	const auto *left = reinterpret_cast<float*>(audio_data->data[0]);
+	if (audio_data->data[1]) {
+		const auto *right = reinterpret_cast<const float *>(audio_data->data[1]);
+		for (size_t i = 0; i < frames; ++i) {
+			mono[i] = (left[i] + right[i]) * 0.5f;
+		}
+	} else {
+		std::memcpy(mono.data(), left,  frames * sizeof(float));
+	}
+	const size_t out_frames = resample_audio(ctx, mono.data(), frames);
 
 	if (ctx->resampler_warmed_up != 0) {
 		ctx->resampler_warmed_up--;
 		return;
 	}
 
+	const auto data = reinterpret_cast<const char *>(ctx->resample_output_buffer.data());
+
 	ctx->send_buffer.insert(
 		ctx->send_buffer.end(),
-		ctx->resample_output_buffer.begin(),
-		ctx->resample_output_buffer.begin() + static_cast<std::vector<float>::difference_type>(out_frames)
+		data,
+		data + out_frames * sizeof(float)
 	);
 
-	while (ctx->send_buffer.size() >= 2560) {
-		std::vector<float> chunk(ctx->send_buffer.begin(), ctx->send_buffer.begin() + 2560);
-		ctx->send_buffer.erase(ctx->send_buffer.begin(), ctx->send_buffer.begin() + 2560);
+	while (ctx->send_buffer.size() >= ctx->audio_chunk_size) {
+		std::vector<char> chunk(ctx->send_buffer.begin(), ctx->send_buffer.begin() + ctx->audio_chunk_size);
+		ctx->send_buffer.erase(ctx->send_buffer.begin(), ctx->send_buffer.begin() + ctx->audio_chunk_size);
 
 		ctx->grpc_client->SendChunk(chunk);
 	}

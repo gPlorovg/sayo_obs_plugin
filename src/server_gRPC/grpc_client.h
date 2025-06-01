@@ -26,7 +26,7 @@ public:
 
     void Start();
     void Stop();
-    void SendChunk(const std::vector<float>& chunk);
+    void SendChunk(const std::vector<char>& chunk);
     bool IsRunning();
     [[nodiscard]] bool TestConnection() const;
 
@@ -44,7 +44,7 @@ private:
     std::thread sender_thread_;
     std::thread receiver_thread_;
     std::condition_variable cv_;
-    std::queue<std::vector<float>> audio_queue_;
+    std::queue<std::vector<char>> audio_queue_;
 
     asr_source* ctx_;
 
