@@ -59,13 +59,19 @@ size_t resample_audio(asr_source *ctx, const float *in, size_t in_frames)
 	return src_data.output_frames_gen;
 }
 
+bool is_empty_chunk(const float* buffer) {
+	static constexpr float zeros[1200] = {0.0f};
+	return memcmp(buffer, zeros, 1200 * sizeof(float)) == 0;
+}
+
 void audio_callback(void *param, [[maybe_unused]] obs_source_t *source, const struct audio_data *audio_data, bool muted)
 {
 	auto *ctx = static_cast<asr_source *>(param);
 
 	if (!ctx || !ctx->grpc_client || !ctx->grpc_client->IsRunning()) return;
 	if (muted) return;
-	if (audio_data->frames == 1200) return;
+
+	if (audio_data->frames == 1200 and is_empty_chunk(reinterpret_cast<float*>(audio_data->data[0]))) return;
 
 	const size_t frames = audio_data->frames;
 	std::vector<float> mono(frames);
