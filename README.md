@@ -62,5 +62,15 @@ Basic concepts of codesigning and notarization on macOS are explained in the cor
 ## How to build and install plugin
 
 ```bash
-`sudo ./.github/scripts/install_plugin.sh `
+sudo ./.github/scripts/install_plugin.sh 
+```
+
+## How to debug plugin
+```bash
+gdb obs
+run
+
+bt
+info threads
+thread apply all bt
 ```

@@ -21,7 +21,7 @@ struct asr_source; // Forward declaration
 
 class ASRGrpcClient {
 public:
-    ASRGrpcClient(const std::string& address, asr_source* context);
+    ASRGrpcClient(const std::string& server, int port, asr_source* context);
     ~ASRGrpcClient();
 
     void Start();

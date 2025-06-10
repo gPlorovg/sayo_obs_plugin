@@ -11,13 +11,23 @@ OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 
 static std::atomic<int> asr_instance_counter{0};
 
+namespace asr_defaults {
+	constexpr int TARGET_SAMPLE_RATE = 16000;
+	constexpr int INPUT_SAMPLE_RATE = 48000;
+	constexpr int RESAMPLER_WARMED_UP = 5;
+	constexpr char SERVER_ADDRESS[] = "localhost";
+	constexpr int SERVER_PORT = 50051;
+	constexpr int MAX_LINES = 2;
+	constexpr int MAX_CHARS_PER_LINE = 60;
+}
+
 struct asr_source {
+	obs_source_t *source = nullptr;
 	std::string selected_audio_source;
 	obs_source_t *internal_text_source = nullptr;
 	SRC_STATE *resampler = nullptr;
-
-	int target_sample_rate = 16000;
-	uint32_t input_sample_rate = 48000;  // default value
+	uint32_t target_sample_rate = asr_defaults::TARGET_SAMPLE_RATE;
+	uint32_t input_sample_rate = asr_defaults::INPUT_SAMPLE_RATE;
 
 	float resample_ratio = static_cast<float>(target_sample_rate) / static_cast<float>(input_sample_rate);
 
@@ -27,9 +37,15 @@ struct asr_source {
 	size_t audio_chunk_size = (target_sample_rate / 1000 * 160) * sizeof(float);
 	std::vector<char> send_buffer;
 
-	int resampler_warmed_up = 5;
+	int resampler_warmed_up = asr_defaults::RESAMPLER_WARMED_UP;
 
 	ASRGrpcClient* grpc_client = nullptr;
+	std::string connect_status = "Unknown"; // Successful, Failed, Unknown, Connecting
+
+	std::string server_address = asr_defaults::SERVER_ADDRESS;
+	int server_port = asr_defaults::SERVER_PORT;
+	int max_lines = asr_defaults::MAX_LINES;
+	int max_chars_per_line = asr_defaults::MAX_CHARS_PER_LINE;
 };
 
 static const char *asr_get_name([[maybe_unused]] void *unused)
@@ -112,40 +128,27 @@ static void asr_update(void *data, obs_data_t *settings)
 {
 	auto *ctx = static_cast<asr_source *>(data);
 
-	if (!ctx->grpc_client) {
-		ctx->grpc_client = new ASRGrpcClient("localhost:50051", ctx);
-		if (!ctx->grpc_client->TestConnection()) {
-			obs_log(LOG_ERROR, "Unable to connect to gRPC server!");
-			delete ctx->grpc_client;
-			ctx->grpc_client = nullptr;
-			return;
-		}
-	}
+	ctx->server_address = static_cast<std::string>(obs_data_get_string(settings, "server_address"));
+	ctx->server_port = static_cast<int>(obs_data_get_int(settings, "server_port"));
 
-	if (ctx->grpc_client && !ctx->grpc_client->IsRunning()) ctx->grpc_client->Start();
+	ctx->max_lines = static_cast<int>(obs_data_get_int(settings, "max_lines"));
+	ctx->max_chars_per_line = static_cast<int>(obs_data_get_int(settings, "max_chars_per_line"));
 
+	// Update audio source
 	const char *audio_name = obs_data_get_string(settings, "audio_source");
-	if (audio_name)
+	if (ctx->selected_audio_source.empty() || (ctx->selected_audio_source != audio_name)) {
 		ctx->selected_audio_source = audio_name;
-
+		obs_log(LOG_INFO, "Audio source set up: %s", audio_name);
+	}
+	// Update text box
 	if (ctx->internal_text_source)
 		obs_source_update(ctx->internal_text_source, settings);
-
-	obs_log(LOG_INFO, "Audio source set up: %s", audio_name);
-
-	if (obs_source_t *audio_src = obs_get_source_by_name(ctx->selected_audio_source.c_str())) {
-		obs_source_add_audio_capture_callback(audio_src, audio_callback, ctx);
-		obs_log(LOG_INFO, "Audio callback set up");
-		obs_source_release(audio_src);
-	} else {
-		obs_log(LOG_ERROR, "Failed to set up audio callback!");
-		obs_source_release(audio_src);
-	}
 }
 
-static void *asr_create([[maybe_unused]] obs_data_t *settings, [[maybe_unused]] obs_source_t *source)
+static void *asr_create([[maybe_unused]] obs_data_t *settings, obs_source_t *source)
 {
 	auto *ctx = new asr_source;
+	ctx->source = source;
 
 	// Create internal text_ft2_source with passed-in properties
 	obs_data_t *text_settings = obs_data_create();
@@ -163,27 +166,35 @@ static void *asr_create([[maybe_unused]] obs_data_t *settings, [[maybe_unused]] 
 	obs_data_release(text_settings);
 	obs_log(LOG_INFO, "Internal text_ft2_source created with name: %s", name.c_str());
 
+	// Create resampler
 	if (const audio_output_info *info = audio_output_get_info(obs_get_audio())) {
 		ctx->input_sample_rate = info->samples_per_sec;
-		ctx->resample_ratio = static_cast<float>(ctx->target_sample_rate) / static_cast<float>(ctx->input_sample_rate);
-
 		obs_log(LOG_INFO, "Input sample rate from OBS: %d", ctx->input_sample_rate);
-		obs_log(LOG_INFO, "Resample ratio: %.6f", ctx->resample_ratio);
 	} else {
-		obs_log(LOG_ERROR, "Failed to get OBS audio sample rate; using default 48000 → 16000");
+		obs_log(LOG_ERROR, "Failed to get OBS audio sample rate. Using default 48000 → 16000");
 	}
+	ctx->resample_ratio = static_cast<float>(ctx->target_sample_rate) / static_cast<float>(ctx->input_sample_rate);
+	obs_log(LOG_INFO, "Resample ratio: %.6f", ctx->resample_ratio);
 
 	int err;
 	ctx->resampler = src_new(SRC_SINC_FASTEST, 1, &err);
 	if (!ctx->resampler) {
 		obs_log(LOG_ERROR, "Failed to create resampler: %s", src_strerror(err));
 	} else {
-		obs_log(LOG_INFO, "Resampler created");
+		obs_log(LOG_INFO, "Resampler created!");
 	}
 
+	// Get server parameters from settings
+	ctx->server_address = obs_data_get_string(settings, "server_address");
+	ctx->server_port = static_cast<int>(obs_data_get_int(settings, "server_port"));
+	// Get text box parameters from settings
+	ctx->max_lines = static_cast<int>(obs_data_get_int(settings, "max_lines"));
+	ctx->max_chars_per_line = static_cast<int>(obs_data_get_int(settings, "max_chars_per_line"));
+
+	// Prepare audio buffer
 	ctx->send_buffer.reserve(ctx->audio_chunk_size);
 
-	asr_update(ctx, settings);
+	/*asr_update(ctx, settings);*/
 	return ctx;
 }
 
@@ -194,8 +205,7 @@ static void asr_destroy(void *data)
 	if (!ctx->selected_audio_source.empty()) {
 		if (obs_source_t *audio_src = obs_get_source_by_name(ctx->selected_audio_source.c_str())) {
 			obs_source_remove_audio_capture_callback(audio_src, audio_callback, ctx);
-			obs_log(LOG_INFO, "audio callback destroyed");
-			obs_log(LOG_INFO, "remove audio callback: source=%p, ctx=%p", audio_src, ctx);
+			obs_log(LOG_INFO, "Audio callback destroyed!");
 			obs_source_release(audio_src);
 		}
 	}
@@ -210,14 +220,153 @@ static void asr_destroy(void *data)
 	delete ctx;
 }
 
-static obs_properties_t *asr_get_properties([[maybe_unused]] void *data)
+struct UpdateUIArgs {
+	asr_source* ctx;
+	bool connected;
+};
+struct UpdateAudioCallbackArgs {
+	asr_source* ctx;
+	bool connected;
+};
+static void update_ui(void* param) {
+	const auto args = static_cast<UpdateUIArgs*>(param);
+	if (!args->connected) {
+		obs_log(LOG_INFO, "Connection status: Failed!");
+		args->ctx->connect_status = "Failed";
+	} else {
+		obs_log(LOG_INFO, "Connection status: Successful!");
+		args->ctx->connect_status = "Successful";
+	}
+	delete args;
+}
+static void update_audio_callback(void* param) {
+	const auto args = static_cast<UpdateAudioCallbackArgs*>(param);
+	const auto ctx = args->ctx;
+
+	if (!args->connected) {
+		delete ctx->grpc_client;
+		ctx->grpc_client = nullptr;
+		obs_log(LOG_INFO, "No audio callback set up!");
+	} else {
+		if (ctx->grpc_client && !ctx->grpc_client->IsRunning())
+			ctx->grpc_client->Start();
+
+		if (obs_source_t *audio_src = obs_get_source_by_name(ctx->selected_audio_source.c_str())) {
+			obs_source_remove_audio_capture_callback(audio_src, audio_callback, ctx);
+			obs_log(LOG_INFO, "Previous audio callback destroyed");
+			obs_source_add_audio_capture_callback(audio_src, audio_callback, ctx);
+			obs_log(LOG_INFO, "New audio callback set up");
+			obs_source_release(audio_src);
+		} else {
+			obs_log(LOG_ERROR, "Failed to set up audio callback!");
+		}
+	}
+	delete args;
+}
+
+bool on_check_button_clicked(obs_properties_t* props, obs_property_t* property, void* data)
 {
+	auto *ctx = static_cast<asr_source *>(data);
+	if (ctx->connect_status != "Connecting") {
+		obs_property_t* status_prop = obs_properties_get(props, "connection_status");
+		obs_property_set_description(status_prop, ("Connection status: " + ctx->connect_status).c_str());
+		obs_property_set_enabled(obs_properties_get(props, "connect_button"), true);
+		obs_property_set_enabled(obs_properties_get(props, "server_address"), true);
+		obs_property_set_enabled(obs_properties_get(props, "server_port"), true);
+
+		obs_property_set_enabled(property, false);
+	}
+	return true;
+}
+
+bool on_connect_button_clicked(obs_properties_t* props, obs_property_t* property, void* data)
+{
+	auto *ctx = static_cast<asr_source *>(data);
+	ctx->connect_status = "Connecting";
+	obs_property_t* status_prop = obs_properties_get(props, "connection_status");
+	obs_property_set_enabled(property, false);
+	obs_property_set_enabled(obs_properties_get(props, "server_address"), false);
+	obs_property_set_enabled(obs_properties_get(props, "server_port"), false);
+	obs_property_set_enabled(obs_properties_get(props, "check_button"), false);
+	obs_property_set_description(status_prop, ("Connection status: " + ctx->connect_status + " Waiting 1-20s" + "...").c_str());
+
+	obs_property_set_enabled(obs_properties_get(props, "check_button"), true);
+
+	std::thread([ctx]() {
+
+		auto update_ui_args = new UpdateUIArgs;
+		auto update_audio_callback_args = new UpdateAudioCallbackArgs;
+
+		int try_attempts = 3;
+		bool connected = false;
+
+		ctx->grpc_client = new ASRGrpcClient(ctx->server_address, ctx->server_port, ctx);
+
+		while (try_attempts-- > 0) {
+			if (!ctx || !ctx->grpc_client) break;
+			if (ctx->grpc_client->TestConnection()) {
+				connected = true;
+				break;
+			}
+			obs_log(LOG_ERROR, "Failed to connect to gRPC server (%s:%d)!\n Attempts left: %d", ctx->server_address, ctx->server_port, try_attempts);
+			std::this_thread::sleep_for(std::chrono::seconds(5));
+		}
+
+		if (!ctx) return;
+
+		update_audio_callback_args->connected = connected;
+		update_audio_callback_args->ctx = ctx;
+		obs_queue_task(OBS_TASK_UI, update_audio_callback, update_audio_callback_args, false);
+
+		update_ui_args->connected = connected;
+		update_ui_args->ctx = ctx;
+		obs_queue_task(OBS_TASK_UI, update_ui, update_ui_args, true);
+	}).detach();
+	return true;
+}
+
+
+static obs_properties_t *asr_get_properties(void *data)
+{
+	auto *ctx = static_cast<asr_source *>(data);
 	obs_properties_t *props = obs_properties_create();
 
 	obs_property_t *list = obs_properties_add_list(
 		props, "audio_source", "Audio Source",
 		OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING
 	);
+
+	const auto server_address = obs_properties_add_text(props, "server_address", "Server address", OBS_TEXT_DEFAULT);
+	const auto server_port = obs_properties_add_int(props, "server_port", "Port", 1, 65535, 1);
+
+	const auto conn_btn = obs_properties_add_button(
+		props,
+		"connect_button",
+		"Connect to server",
+		on_connect_button_clicked
+	);
+	const auto conn_status = obs_properties_add_text(props, "connection_status", ("Connection status: " + ctx->connect_status).c_str(), OBS_TEXT_INFO);
+	const auto check_btn = obs_properties_add_button(
+		props,
+		"check_button",
+		"Check connection",
+		on_check_button_clicked
+	);
+	if (ctx->connect_status != "Connecting") {
+		obs_property_set_enabled(check_btn, false);
+		obs_property_set_enabled(conn_btn, true);
+		obs_property_set_enabled(server_address, true);
+		obs_property_set_enabled(server_port, true);
+	} else {
+		obs_property_set_enabled(check_btn, true);
+		obs_property_set_enabled(conn_btn, false);
+		obs_property_set_enabled(server_address, false);
+		obs_property_set_enabled(server_port, false);
+		obs_property_set_description(conn_status, ("Connection status: " + ctx->connect_status + " Waiting 1-20s" + "...").c_str());
+	}
+
+	obs_properties_add_int(props, "max_lines", "Max lines", 1, 10, 1);
+	obs_properties_add_int(props, "max_chars_per_line", "Max chars per line", 16, 100, 1);
 
 	obs_enum_sources([](void *data, obs_source_t *source) {
 		if (obs_source_get_output_flags(source) & OBS_SOURCE_AUDIO) {
@@ -230,6 +379,7 @@ static obs_properties_t *asr_get_properties([[maybe_unused]] void *data)
 	// Proxy properties from text_ft2_source
 	obs_data_t *dummy_settings = obs_data_create();
 	obs_source_t *dummy = obs_source_create_private("text_ft2_source", nullptr, dummy_settings);
+
 	obs_data_release(dummy_settings);
 
 	if (dummy) {
@@ -306,24 +456,29 @@ static uint32_t asr_get_height(void *data) {
 
 void asr_tick_callback(void *data, [[maybe_unused]] float seconds) {
 	auto *ctx = static_cast<asr_source *>(data);
-	if (ctx && ctx->grpc_client && ctx->grpc_client->IsRunning()) {
-		std::string asr_result;
-		{
-			std::lock_guard<std::mutex> lock(ctx->grpc_client->queue_mutex);
-			if (!ctx->grpc_client->asr_results_queue.empty()) {
-				asr_result = ctx->grpc_client->asr_results_queue.front();
-				ctx->grpc_client->asr_results_queue.pop();
-			}
+	if (!ctx || !ctx->grpc_client || !ctx->grpc_client->IsRunning()) return;
+	std::string asr_result;
+	{
+		std::lock_guard<std::mutex> lock(ctx->grpc_client->queue_mutex);
+		if (!ctx->grpc_client->asr_results_queue.empty()) {
+			asr_result = ctx->grpc_client->asr_results_queue.front();
+			ctx->grpc_client->asr_results_queue.pop();
 		}
-		if (!asr_result.empty() && ctx->internal_text_source) {
-			obs_data_t *settings = obs_source_get_settings(ctx->internal_text_source);
-			obs_data_set_string(settings, "text", asr_result.c_str());
-			obs_source_update(ctx->internal_text_source, settings);
-			obs_data_release(settings);
-		}
+	}
+	if (!asr_result.empty() && ctx->internal_text_source) {
+		obs_data_t *settings = obs_source_get_settings(ctx->internal_text_source);
+		obs_data_set_string(settings, "text", asr_result.c_str());
+		obs_source_update(ctx->internal_text_source, settings);
+		obs_data_release(settings);
 	}
 }
 
+void asr_get_defaults(obs_data_t *settings) {
+	obs_data_set_default_string(settings, "server_address", asr_defaults::SERVER_ADDRESS);
+	obs_data_set_default_int(settings, "server_port", asr_defaults::SERVER_PORT);
+	obs_data_set_default_int(settings, "max_lines", asr_defaults::MAX_LINES);
+	obs_data_set_default_int(settings, "max_chars_per_line", asr_defaults::MAX_CHARS_PER_LINE);
+}
 
 static struct obs_source_info asr_source_info = {
 	/* Required */
@@ -338,7 +493,7 @@ static struct obs_source_info asr_source_info = {
 	/* get_height */            asr_get_height,
 
 	/* Optional */
-	/* get_defaults */          nullptr,
+	/* get_defaults */          asr_get_defaults,
 	/* get_properties */        asr_get_properties,
 	/* update */                asr_update,
 	/* activate */              nullptr,

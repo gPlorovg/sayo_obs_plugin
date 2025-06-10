@@ -3,9 +3,10 @@
 #include <obs-module.h>
 #include <plugin-support.h>
 
-ASRGrpcClient::ASRGrpcClient(const std::string& address, asr_source* context)
+ASRGrpcClient::ASRGrpcClient(const std::string& server, const int port, asr_source* context)
     : ctx_(context)
 {
+    const std::string address = server + ":" + std::to_string(port);
     channel_ = grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
     stub_ = sayo::SayoService::NewStub(channel_);
 }
@@ -54,7 +55,6 @@ void ASRGrpcClient::SendChunk(const std::vector<char>& chunk) {
 }
 
 void ASRGrpcClient::SenderLoop() {
-
     while (running_ && stream_) {
         std::vector<char> chunk;
         {
@@ -67,18 +67,19 @@ void ASRGrpcClient::SenderLoop() {
         sayo::AudioChunk msg;
         msg.set_pcm(reinterpret_cast<const char*>(chunk.data()), chunk.size());
         if (!stream_->Write(msg)) {
-            obs_log(LOG_ERROR, "Failed to write audio chunk");
+            obs_log(LOG_ERROR, "[SenderLoop] Failed to write audio chunk, exiting loop");
+            running_ = false;
         }
     }
-    obs_log(LOG_INFO, "SenderLoop: finished");
+    /*obs_log(LOG_INFO, "SenderLoop: finished");*/
 }
 
 void ASRGrpcClient::ReceiverLoop() {
     sayo::ASRResult result;
     while (running_ && stream_) {
         if (!stream_->Read(&result)) {
-            obs_log(LOG_INFO, "ReceiverLoop: stream_->Read returned false, exiting loop");
-            break;
+            obs_log(LOG_INFO, "[ReceiverLoop] Failed to read text, exiting loop");
+            running_ = false;
         }
         if (!running_) break;
 
@@ -88,7 +89,7 @@ void ASRGrpcClient::ReceiverLoop() {
             asr_results_queue.push(text);
         }
     }
-    obs_log(LOG_INFO, "ReceiverLoop: finished");
+    /*obs_log(LOG_INFO, "ReceiverLoop: finished");*/
 }
 
 bool ASRGrpcClient::IsRunning() {
