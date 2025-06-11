@@ -5,6 +5,7 @@
 #include <vector>
 #include <samplerate.h>
 #include "server_gRPC/grpc_client.h"
+#include "subtitle_buffer.h"
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
@@ -46,6 +47,8 @@ struct asr_source {
 	int server_port = asr_defaults::SERVER_PORT;
 	int max_lines = asr_defaults::MAX_LINES;
 	int max_chars_per_line = asr_defaults::MAX_CHARS_PER_LINE;
+
+	SubtitlesBuffer* subtitles_buffer = nullptr;
 };
 
 static const char *asr_get_name([[maybe_unused]] void *unused)
@@ -194,7 +197,8 @@ static void *asr_create([[maybe_unused]] obs_data_t *settings, obs_source_t *sou
 	// Prepare audio buffer
 	ctx->send_buffer.reserve(ctx->audio_chunk_size);
 
-	/*asr_update(ctx, settings);*/
+	// Create subtitle buffer
+	ctx->subtitles_buffer = new SubtitlesBuffer(ctx->max_lines, ctx->max_chars_per_line);
 	return ctx;
 }
 
@@ -217,6 +221,8 @@ static void asr_destroy(void *data)
 		obs_source_release(ctx->internal_text_source);
 	if (ctx->resampler)
 		src_delete(ctx->resampler);
+
+	delete ctx->subtitles_buffer;
 	delete ctx;
 }
 
@@ -466,8 +472,9 @@ void asr_tick_callback(void *data, [[maybe_unused]] float seconds) {
 		}
 	}
 	if (!asr_result.empty() && ctx->internal_text_source) {
+		ctx->subtitles_buffer->addWord(asr_result);
 		obs_data_t *settings = obs_source_get_settings(ctx->internal_text_source);
-		obs_data_set_string(settings, "text", asr_result.c_str());
+		obs_data_set_string(settings, "text", ctx->subtitles_buffer->getBufferContent().c_str());
 		obs_source_update(ctx->internal_text_source, settings);
 		obs_data_release(settings);
 	}

@@ -20,6 +20,8 @@ add_library(${CMAKE_PROJECT_NAME} MODULE
         src/server_gRPC/grpc_client.h
         src/server_gRPC/sayo.pb.cc
         src/server_gRPC/sayo.grpc.pb.cc
+        src/subtitle_buffer.cpp
+        src/subtitle_buffer.h
 )
 
 find_package(libobs REQUIRED)

@@ -68,7 +68,8 @@ void ASRGrpcClient::SenderLoop() {
         msg.set_pcm(reinterpret_cast<const char*>(chunk.data()), chunk.size());
         if (!stream_->Write(msg)) {
             obs_log(LOG_ERROR, "[SenderLoop] Failed to write audio chunk, exiting loop");
-            running_ = false;
+            Stop();
+            break;
         }
     }
     /*obs_log(LOG_INFO, "SenderLoop: finished");*/
@@ -79,7 +80,8 @@ void ASRGrpcClient::ReceiverLoop() {
     while (running_ && stream_) {
         if (!stream_->Read(&result)) {
             obs_log(LOG_INFO, "[ReceiverLoop] Failed to read text, exiting loop");
-            running_ = false;
+            Stop();
+            break;
         }
         if (!running_) break;
 
