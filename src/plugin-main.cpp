@@ -35,7 +35,7 @@ struct asr_source {
 	std::vector<float> resample_input_buffer;
 	std::vector<float> resample_output_buffer;
 
-	size_t audio_chunk_size = (target_sample_rate / 1000 * 160) * sizeof(float);
+	size_t audio_chunk_size = (target_sample_rate / 1000 * 96) * sizeof(float); // 96ms (1560 samples)
 	std::vector<char> send_buffer;
 
 	int resampler_warmed_up = asr_defaults::RESAMPLER_WARMED_UP;

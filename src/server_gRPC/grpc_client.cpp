@@ -68,21 +68,25 @@ void ASRGrpcClient::SenderLoop() {
         msg.set_pcm(reinterpret_cast<const char*>(chunk.data()), chunk.size());
         if (!stream_->Write(msg)) {
             obs_log(LOG_ERROR, "[SenderLoop] Failed to write audio chunk, exiting loop");
-            Stop();
             break;
         }
     }
-    /*obs_log(LOG_INFO, "SenderLoop: finished");*/
+    obs_log(LOG_INFO, "SenderLoop: finished");
 }
 
 void ASRGrpcClient::ReceiverLoop() {
     sayo::ASRResult result;
     while (running_ && stream_) {
-        if (!stream_->Read(&result)) {
-            obs_log(LOG_INFO, "[ReceiverLoop] Failed to read text, exiting loop");
-            Stop();
+        if (!stream_) {
+            obs_log(LOG_INFO, "[ReceiverLoop] stream_ is null, exiting");
             break;
         }
+
+        if (!stream_->Read(&result)) {
+            obs_log(LOG_INFO, "[ReceiverLoop] Failed to read text (server closed stream?)");
+            break;
+        }
+
         if (!running_) break;
 
         const std::string &text = result.text();
@@ -91,7 +95,7 @@ void ASRGrpcClient::ReceiverLoop() {
             asr_results_queue.push(text);
         }
     }
-    /*obs_log(LOG_INFO, "ReceiverLoop: finished");*/
+    obs_log(LOG_INFO, "ReceiverLoop: finished");
 }
 
 bool ASRGrpcClient::IsRunning() {
