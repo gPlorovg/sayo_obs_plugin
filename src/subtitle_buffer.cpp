@@ -10,7 +10,7 @@ void SubtitlesBuffer::addWord(const std::string& word) {
     // Проверяем, можем ли мы добавить слово в текущую строку
     if (!lines.empty() && lines.back().size() + word.size() + 1 <= max_chars_per_line) {
         // Если слово помещается в последнюю строку, добавляем его туда
-        lines.back() += (lines.back().empty() ? "" : " ") + word;
+        lines.back() += word;
     } else {
         // Если слово не влезает в последнюю строку, создаем новую строку
         if (lines.size() == max_lines) {
