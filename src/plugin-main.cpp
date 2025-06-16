@@ -49,6 +49,8 @@ struct asr_source {
 	int max_chars_per_line = asr_defaults::MAX_CHARS_PER_LINE;
 
 	SubtitlesBuffer* subtitles_buffer = nullptr;
+
+	std::mutex grpc_mutex;
 };
 
 static const char *asr_get_name([[maybe_unused]] void *unused)
@@ -87,43 +89,46 @@ void audio_callback(void *param, [[maybe_unused]] obs_source_t *source, const st
 {
 	auto *ctx = static_cast<asr_source *>(param);
 
-	if (!ctx || !ctx->grpc_client || !ctx->grpc_client->IsRunning()) return;
-	if (muted) return;
+	if (!ctx || muted) return;
+	{
+		std::lock_guard<std::mutex> lock(ctx->grpc_mutex);
+		if (!ctx->grpc_client || !ctx->grpc_client->IsRunning()) return;
 
-	if (audio_data->frames == 1200 and is_empty_chunk(reinterpret_cast<float*>(audio_data->data[0]))) return;
+		if (audio_data->frames == 1200 and is_empty_chunk(reinterpret_cast<float*>(audio_data->data[0]))) return;
 
-	const size_t frames = audio_data->frames;
-	std::vector<float> mono(frames);
+		const size_t frames = audio_data->frames;
+		std::vector<float> mono(frames);
 
-	const auto *left = reinterpret_cast<float*>(audio_data->data[0]);
-	if (audio_data->data[1]) {
-		const auto *right = reinterpret_cast<const float *>(audio_data->data[1]);
-		for (size_t i = 0; i < frames; ++i) {
-			mono[i] = (left[i] + right[i]) * 0.5f;
+		const auto *left = reinterpret_cast<float*>(audio_data->data[0]);
+		if (audio_data->data[1]) {
+			const auto *right = reinterpret_cast<const float *>(audio_data->data[1]);
+			for (size_t i = 0; i < frames; ++i) {
+				mono[i] = (left[i] + right[i]) * 0.5f;
+			}
+		} else {
+			std::memcpy(mono.data(), left,  frames * sizeof(float));
 		}
-	} else {
-		std::memcpy(mono.data(), left,  frames * sizeof(float));
-	}
-	const size_t out_frames = resample_audio(ctx, mono.data(), frames);
+		const size_t out_frames = resample_audio(ctx, mono.data(), frames);
 
-	if (ctx->resampler_warmed_up != 0) {
-		ctx->resampler_warmed_up--;
-		return;
-	}
+		if (ctx->resampler_warmed_up != 0) {
+			ctx->resampler_warmed_up--;
+			return;
+		}
 
-	const auto data = reinterpret_cast<const char *>(ctx->resample_output_buffer.data());
+		const auto data = reinterpret_cast<const char *>(ctx->resample_output_buffer.data());
 
-	ctx->send_buffer.insert(
-		ctx->send_buffer.end(),
-		data,
-		data + out_frames * sizeof(float)
-	);
+		ctx->send_buffer.insert(
+			ctx->send_buffer.end(),
+			data,
+			data + out_frames * sizeof(float)
+		);
 
-	while (ctx->send_buffer.size() >= ctx->audio_chunk_size) {
-		std::vector<char> chunk(ctx->send_buffer.begin(), ctx->send_buffer.begin() + ctx->audio_chunk_size);
-		ctx->send_buffer.erase(ctx->send_buffer.begin(), ctx->send_buffer.begin() + ctx->audio_chunk_size);
+		while (ctx->send_buffer.size() >= ctx->audio_chunk_size) {
+			std::vector<char> chunk(ctx->send_buffer.begin(), ctx->send_buffer.begin() + ctx->audio_chunk_size);
+			ctx->send_buffer.erase(ctx->send_buffer.begin(), ctx->send_buffer.begin() + ctx->audio_chunk_size);
 
-		ctx->grpc_client->SendChunk(chunk);
+			ctx->grpc_client->SendChunk(chunk);
+		}
 	}
 }
 static void update_audio_callback(asr_source * ctx) {
@@ -241,10 +246,14 @@ static void asr_destroy(void *data)
 			obs_source_release(audio_src);
 		}
 	}
-	if (ctx->grpc_client) {
-		delete ctx->grpc_client;
-		ctx->grpc_client = nullptr;
+	{
+		std::lock_guard<std::mutex> lock(ctx->grpc_mutex); // deadlock when removed while try to connect
+		if (ctx->grpc_client) {
+			delete ctx->grpc_client;
+			ctx->grpc_client = nullptr;
+		}
 	}
+
 	if (ctx->internal_text_source)
 		obs_source_release(ctx->internal_text_source);
 	if (ctx->resampler)
@@ -258,10 +267,7 @@ struct UpdateUIArgs {
 	asr_source* ctx;
 	bool connected;
 };
-/*struct UpdateAudioCallbackArgs {
-	asr_source* ctx;
-	bool connected;
-};*/
+
 static void update_ui(void* param) {
 	const auto args = static_cast<UpdateUIArgs*>(param);
 	if (!args->connected) {
@@ -305,32 +311,32 @@ bool on_connect_button_clicked(obs_properties_t* props, obs_property_t* property
 	std::thread([ctx]() {
 
 		auto update_ui_args = new UpdateUIArgs;
-		/*auto update_audio_callback_args = new UpdateAudioCallbackArgs;*/
 
 		int try_attempts = 3;
 		bool connected = false;
-
-		ctx->grpc_client = new ASRGrpcClient(ctx->server_address, ctx->server_port, ctx);
-
-		while (try_attempts-- > 0) {
-			if (!ctx || !ctx->grpc_client) break;
-			if (ctx->grpc_client->TestConnection()) {
-				connected = true;
-				break;
+		{
+			std::lock_guard<std::mutex> lock(ctx->grpc_mutex);
+			if (ctx->grpc_client) {
+				delete ctx->grpc_client;
+				ctx->grpc_client = nullptr;
 			}
-			obs_log(LOG_ERROR, "Failed to connect to gRPC server (%s:%d)!\n Attempts left: %d", ctx->server_address, ctx->server_port, try_attempts);
-			std::this_thread::sleep_for(std::chrono::seconds(5));
+			ctx->grpc_client = new ASRGrpcClient(ctx->server_address, ctx->server_port, ctx);
+
+			while (try_attempts-- > 0) {
+				if (!ctx || !ctx->grpc_client) break;
+				if (ctx->grpc_client->TestConnection()) {
+					connected = true;
+					break;
+				}
+				obs_log(LOG_ERROR, "Failed to connect to gRPC server (%s:%d)!\n Attempts left: %d", ctx->server_address, ctx->server_port, try_attempts);
+				std::this_thread::sleep_for(std::chrono::seconds(5));
+			}
+
+			if (!ctx) return;
+
+			if (connected && ctx->grpc_client && !ctx->grpc_client->IsRunning())
+				ctx->grpc_client->Start();
 		}
-
-		if (!ctx) return;
-
-		/*update_audio_callback_args->connected = connected;
-		update_audio_callback_args->ctx = ctx;
-		obs_queue_task(OBS_TASK_UI, update_audio_callback, update_audio_callback_args, false);*/
-
-		if (connected && ctx->grpc_client && !ctx->grpc_client->IsRunning())
-			ctx->grpc_client->Start();
-
 		update_ui_args->connected = connected;
 		update_ui_args->ctx = ctx;
 		obs_queue_task(OBS_TASK_UI, update_ui, update_ui_args, true);
@@ -469,15 +475,19 @@ static uint32_t asr_get_height(void *data) {
 
 void asr_tick_callback(void *data, [[maybe_unused]] float seconds) {
 	auto *ctx = static_cast<asr_source *>(data);
-	if (!ctx || !ctx->grpc_client || !ctx->grpc_client->IsRunning()) return;
 	std::string asr_result;
 	{
-		std::lock_guard<std::mutex> lock(ctx->grpc_client->queue_mutex);
-		if (!ctx->grpc_client->asr_results_queue.empty()) {
-			asr_result = ctx->grpc_client->asr_results_queue.front();
-			ctx->grpc_client->asr_results_queue.pop();
+		std::lock_guard<std::mutex> lock(ctx->grpc_mutex);
+		if (!ctx || !ctx->grpc_client || !ctx->grpc_client->IsRunning()) return;
+		{
+			std::lock_guard<std::mutex> lockq(ctx->grpc_client->queue_mutex);
+			if (!ctx->grpc_client->asr_results_queue.empty()) {
+				asr_result = ctx->grpc_client->asr_results_queue.front();
+				ctx->grpc_client->asr_results_queue.pop();
+			}
 		}
 	}
+
 	if (!asr_result.empty() && ctx->internal_text_source) {
 		ctx->subtitles_buffer->addWord(asr_result);
 		update_internal_text(ctx);
