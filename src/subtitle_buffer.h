@@ -12,7 +12,7 @@ public:
     void addWord(const std::string& word);
 
     [[nodiscard]] std::string getBufferContent() const;
-
+    void changeSize(size_t new_max_lines, size_t new_max_chars_per_line);
 private:
     size_t max_lines;
     size_t max_chars_per_line;

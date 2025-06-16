@@ -138,6 +138,13 @@ static void update_audio_callback(asr_source * ctx) {
 	}
 }
 
+void update_internal_text(asr_source * ctx) {
+	obs_data_t *settings = obs_source_get_settings(ctx->internal_text_source);
+	obs_data_set_string(settings, "text", ctx->subtitles_buffer->getBufferContent().c_str());
+	obs_source_update(ctx->internal_text_source, settings);
+	obs_data_release(settings);
+}
+
 static void asr_update(void *data, obs_data_t *settings)
 {
 	auto *ctx = static_cast<asr_source *>(data);
@@ -145,8 +152,15 @@ static void asr_update(void *data, obs_data_t *settings)
 	ctx->server_address = static_cast<std::string>(obs_data_get_string(settings, "server_address"));
 	ctx->server_port = static_cast<int>(obs_data_get_int(settings, "server_port"));
 
-	ctx->max_lines = static_cast<int>(obs_data_get_int(settings, "max_lines"));
-	ctx->max_chars_per_line = static_cast<int>(obs_data_get_int(settings, "max_chars_per_line"));
+	const auto new_max_lines = static_cast<int>(obs_data_get_int(settings, "max_lines"));
+	const auto new_max_chars_per_line = static_cast<int>(obs_data_get_int(settings, "max_chars_per_line"));
+
+	if (ctx->max_lines != new_max_lines || ctx->max_chars_per_line != new_max_chars_per_line) {
+		ctx->max_lines = new_max_lines;
+		ctx->max_chars_per_line = new_max_chars_per_line;
+		ctx->subtitles_buffer->changeSize(ctx->max_lines, ctx->max_chars_per_line);
+		update_internal_text(ctx);
+	}
 
 	// Update audio source
 	const char *audio_name = obs_data_get_string(settings, "audio_source");
@@ -155,6 +169,8 @@ static void asr_update(void *data, obs_data_t *settings)
 		obs_log(LOG_INFO, "Audio source set up: %s", audio_name);
 		update_audio_callback(ctx);
 	}
+
+
 	// Update text box
 	if (ctx->internal_text_source)
 		obs_source_update(ctx->internal_text_source, settings);
@@ -464,10 +480,7 @@ void asr_tick_callback(void *data, [[maybe_unused]] float seconds) {
 	}
 	if (!asr_result.empty() && ctx->internal_text_source) {
 		ctx->subtitles_buffer->addWord(asr_result);
-		obs_data_t *settings = obs_source_get_settings(ctx->internal_text_source);
-		obs_data_set_string(settings, "text", ctx->subtitles_buffer->getBufferContent().c_str());
-		obs_source_update(ctx->internal_text_source, settings);
-		obs_data_release(settings);
+		update_internal_text(ctx);
 	}
 }
 

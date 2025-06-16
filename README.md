@@ -74,3 +74,9 @@ bt
 info threads
 thread apply all bt
 ```
+
+## How to run some tests
+```bash
+g++ -o test subtitle_buffer_test.cpp subtitle_buffer.cpp
+./test
+```
