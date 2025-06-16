@@ -126,6 +126,17 @@ void audio_callback(void *param, [[maybe_unused]] obs_source_t *source, const st
 		ctx->grpc_client->SendChunk(chunk);
 	}
 }
+static void update_audio_callback(asr_source * ctx) {
+	if (obs_source_t *audio_src = obs_get_source_by_name(ctx->selected_audio_source.c_str())) {
+		obs_source_remove_audio_capture_callback(audio_src, audio_callback, ctx);
+		obs_log(LOG_INFO, "Previous audio callback destroyed");
+		obs_source_add_audio_capture_callback(audio_src, audio_callback, ctx);
+		obs_log(LOG_INFO, "New audio callback set up");
+		obs_source_release(audio_src);
+	} else {
+		obs_log(LOG_ERROR, "Failed to set up audio callback!");
+	}
+}
 
 static void asr_update(void *data, obs_data_t *settings)
 {
@@ -142,6 +153,7 @@ static void asr_update(void *data, obs_data_t *settings)
 	if (ctx->selected_audio_source.empty() || (ctx->selected_audio_source != audio_name)) {
 		ctx->selected_audio_source = audio_name;
 		obs_log(LOG_INFO, "Audio source set up: %s", audio_name);
+		update_audio_callback(ctx);
 	}
 	// Update text box
 	if (ctx->internal_text_source)
@@ -230,10 +242,10 @@ struct UpdateUIArgs {
 	asr_source* ctx;
 	bool connected;
 };
-struct UpdateAudioCallbackArgs {
+/*struct UpdateAudioCallbackArgs {
 	asr_source* ctx;
 	bool connected;
-};
+};*/
 static void update_ui(void* param) {
 	const auto args = static_cast<UpdateUIArgs*>(param);
 	if (!args->connected) {
@@ -242,30 +254,6 @@ static void update_ui(void* param) {
 	} else {
 		obs_log(LOG_INFO, "Connection status: Successful!");
 		args->ctx->connect_status = "Successful";
-	}
-	delete args;
-}
-static void update_audio_callback(void* param) {
-	const auto args = static_cast<UpdateAudioCallbackArgs*>(param);
-	const auto ctx = args->ctx;
-
-	if (!args->connected) {
-		delete ctx->grpc_client;
-		ctx->grpc_client = nullptr;
-		obs_log(LOG_INFO, "No audio callback set up!");
-	} else {
-		if (ctx->grpc_client && !ctx->grpc_client->IsRunning())
-			ctx->grpc_client->Start();
-
-		if (obs_source_t *audio_src = obs_get_source_by_name(ctx->selected_audio_source.c_str())) {
-			obs_source_remove_audio_capture_callback(audio_src, audio_callback, ctx);
-			obs_log(LOG_INFO, "Previous audio callback destroyed");
-			obs_source_add_audio_capture_callback(audio_src, audio_callback, ctx);
-			obs_log(LOG_INFO, "New audio callback set up");
-			obs_source_release(audio_src);
-		} else {
-			obs_log(LOG_ERROR, "Failed to set up audio callback!");
-		}
 	}
 	delete args;
 }
@@ -301,7 +289,7 @@ bool on_connect_button_clicked(obs_properties_t* props, obs_property_t* property
 	std::thread([ctx]() {
 
 		auto update_ui_args = new UpdateUIArgs;
-		auto update_audio_callback_args = new UpdateAudioCallbackArgs;
+		/*auto update_audio_callback_args = new UpdateAudioCallbackArgs;*/
 
 		int try_attempts = 3;
 		bool connected = false;
@@ -320,9 +308,12 @@ bool on_connect_button_clicked(obs_properties_t* props, obs_property_t* property
 
 		if (!ctx) return;
 
-		update_audio_callback_args->connected = connected;
+		/*update_audio_callback_args->connected = connected;
 		update_audio_callback_args->ctx = ctx;
-		obs_queue_task(OBS_TASK_UI, update_audio_callback, update_audio_callback_args, false);
+		obs_queue_task(OBS_TASK_UI, update_audio_callback, update_audio_callback_args, false);*/
+
+		if (connected && ctx->grpc_client && !ctx->grpc_client->IsRunning())
+			ctx->grpc_client->Start();
 
 		update_ui_args->connected = connected;
 		update_ui_args->ctx = ctx;
