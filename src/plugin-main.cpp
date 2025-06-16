@@ -131,17 +131,6 @@ void audio_callback(void *param, [[maybe_unused]] obs_source_t *source, const st
 		}
 	}
 }
-static void update_audio_callback(asr_source * ctx) {
-	if (obs_source_t *audio_src = obs_get_source_by_name(ctx->selected_audio_source.c_str())) {
-		obs_source_remove_audio_capture_callback(audio_src, audio_callback, ctx);
-		obs_log(LOG_INFO, "Previous audio callback destroyed");
-		obs_source_add_audio_capture_callback(audio_src, audio_callback, ctx);
-		obs_log(LOG_INFO, "New audio callback set up");
-		obs_source_release(audio_src);
-	} else {
-		obs_log(LOG_ERROR, "Failed to set up audio callback!");
-	}
-}
 
 void update_internal_text(asr_source * ctx) {
 	obs_data_t *settings = obs_source_get_settings(ctx->internal_text_source);
@@ -170,9 +159,24 @@ static void asr_update(void *data, obs_data_t *settings)
 	// Update audio source
 	const char *audio_name = obs_data_get_string(settings, "audio_source");
 	if (ctx->selected_audio_source.empty() || (ctx->selected_audio_source != audio_name)) {
+		if (obs_source_t *audio_src = obs_get_source_by_name(ctx->selected_audio_source.c_str())) {
+			obs_source_remove_audio_capture_callback(audio_src, audio_callback, ctx);
+			obs_log(LOG_INFO, "Previous audio callback destroyed <%s> ", ctx->selected_audio_source.c_str());
+
+		} else {
+			obs_log(LOG_ERROR, "Failed to destroy audio callback <%s>!", ctx->selected_audio_source.c_str());
+		}
+		if (obs_source_t *audio_src = obs_get_source_by_name(audio_name)) {
+			obs_source_add_audio_capture_callback(audio_src, audio_callback, ctx);
+			obs_log(LOG_INFO, "New audio callback set up <%s> ", audio_name);
+			obs_source_release(audio_src);
+
+		} else {
+			obs_log(LOG_ERROR, "Failed to set up audio callback <%s>!", audio_name);
+		}
+
 		ctx->selected_audio_source = audio_name;
 		obs_log(LOG_INFO, "Audio source set up: %s", audio_name);
-		update_audio_callback(ctx);
 	}
 
 
